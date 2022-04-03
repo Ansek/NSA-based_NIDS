@@ -1,32 +1,32 @@
 /******************************************************************************
      * File: settings.c
-     * Description: Извлечение данных из файла конфигурации.
-     * Created: 3 апреля 2021
-     * Author: Секунов Александр
+     * Description: РР·РІР»РµС‡РµРЅРёРµ РґР°РЅРЅС‹С… РёР· С„Р°Р№Р»Р° РєРѕРЅС„РёРіСѓСЂР°С†РёРё.
+     * Created: 3 Р°РїСЂРµР»СЏ 2021
+     * Author: РЎРµРєСѓРЅРѕРІ РђР»РµРєСЃР°РЅРґСЂ
 
 ******************************************************************************/
 
 #include "settings.h"
 
-char settings_buffer[SETTINGS_BUFFER_SIZE];	// Буфер для извленичия текста
-FILE *settings;  						    // Объект файла настроек
+char settings_buffer[SETTINGS_BUFFER_SIZE];	// Р‘СѓС„РµСЂ РґР»СЏ РёР·РІР»РµРЅРёС‡РёСЏ С‚РµРєСЃС‚Р°
+FILE *settings;  						    // РћР±СЉРµРєС‚ С„Р°Р№Р»Р° РЅР°СЃС‚СЂРѕРµРє
 
-// Вспомогательная, для проверки на новый параметр
+// Р’СЃРїРѕРјРѕРіР°С‚РµР»СЊРЅР°СЏ, РґР»СЏ РїСЂРѕРІРµСЂРєРё РЅР° РЅРѕРІС‹Р№ РїР°СЂР°РјРµС‚СЂ
 Bool check_available()
 {
 	if (!feof(settings))
 	{
 		char c = getc(settings);
-		// Игнорирование строки комментария
+		// РРіРЅРѕСЂРёСЂРѕРІР°РЅРёРµ СЃС‚СЂРѕРєРё РєРѕРјРјРµРЅС‚Р°СЂРёСЏ
 		while (c != EOF && c == ';')
 		{
-			//Cчитывание до новой строки
+			//CС‡РёС‚С‹РІР°РЅРёРµ РґРѕ РЅРѕРІРѕР№ СЃС‚СЂРѕРєРё
 			do {
 				c = getc(settings);
 			} while (c != EOF && c != '\n');
 			c = getc(settings);
 		}
-		// Если нет новой секции или пустой строки
+		// Р•СЃР»Рё РЅРµС‚ РЅРѕРІРѕР№ СЃРµРєС†РёРё РёР»Рё РїСѓСЃС‚РѕР№ СЃС‚СЂРѕРєРё
 		if (c != EOF && c != '[' && c != ' ' && c != '\n' && c != '\r')
 		{
 			ungetc(c, settings);
@@ -39,10 +39,10 @@ Bool check_available()
 Bool is_reading_settings_section(char *section)
 {
 	Bool is_available = FALSE;
-	// Файл настроек уже просматривается
+	// Р¤Р°Р№Р» РЅР°СЃС‚СЂРѕРµРє СѓР¶Рµ РїСЂРѕСЃРјР°С‚СЂРёРІР°РµС‚СЃСЏ
 	if (settings != NULL)
 	{
-		// Проверка, что параметр есть
+		// РџСЂРѕРІРµСЂРєР°, С‡С‚Рѕ РїР°СЂР°РјРµС‚СЂ РµСЃС‚СЊ
 		is_available = check_available();
 		if (!is_available)
 		{
@@ -55,15 +55,15 @@ Bool is_reading_settings_section(char *section)
 		char c;
 		char *p = NULL;
 		settings = fopen(FILE_NAME, "r");
-		// Поиск нужной секции
+		// РџРѕРёСЃРє РЅСѓР¶РЅРѕР№ СЃРµРєС†РёРё
 		do {
-			// Поиск названия раздела
+			// РџРѕРёСЃРє РЅР°Р·РІР°РЅРёСЏ СЂР°Р·РґРµР»Р°
 			do {
 				c = getc(settings);
 			} while (c != EOF && c != '[');
 			if (c != EOF)
 			{
-				// Сравнение названия
+				// РЎСЂР°РІРЅРµРЅРёРµ РЅР°Р·РІР°РЅРёСЏ
 				p = section;
 				do {
 					c = getc(settings);
@@ -72,14 +72,14 @@ Bool is_reading_settings_section(char *section)
 					else
 						break;
 				} while (c != EOF);
-				// Если нашли нужную секцию
+				// Р•СЃР»Рё РЅР°С€Р»Рё РЅСѓР¶РЅСѓСЋ СЃРµРєС†РёСЋ
 				if (c != EOF && c == ']')
 				{
-					//Cчитывание до новой строки
+					//CС‡РёС‚С‹РІР°РЅРёРµ РґРѕ РЅРѕРІРѕР№ СЃС‚СЂРѕРєРё
 					do {
 						c = getc(settings);
 					} while (c != EOF && c != '\n');
-					// Проверка, что параметр есть
+					// РџСЂРѕРІРµСЂРєР°, С‡С‚Рѕ РїР°СЂР°РјРµС‚СЂ РµСЃС‚СЊ
 					is_available = check_available();
 					if (is_available)
 						break;
@@ -93,7 +93,7 @@ Bool is_reading_settings_section(char *section)
 char *read_setting_name()
 {
 	int i = 0;
-	// Считывание имени до разделителя "="
+	// РЎС‡РёС‚С‹РІР°РЅРёРµ РёРјРµРЅРё РґРѕ СЂР°Р·РґРµР»РёС‚РµР»СЏ "="
 	for (; i < SETTINGS_BUFFER_SIZE; i++)
 	{
 		settings_buffer[i] = getc(settings);
@@ -102,10 +102,10 @@ char *read_setting_name()
 		else if (settings_buffer[i] == '=')
 			break;
 	}
-	// Контроль на правильность считывания имени
+	// РљРѕРЅС‚СЂРѕР»СЊ РЅР° РїСЂР°РІРёР»СЊРЅРѕСЃС‚СЊ СЃС‡РёС‚С‹РІР°РЅРёСЏ РёРјРµРЅРё
 	if (i == SETTINGS_BUFFER_SIZE)
 	{
-		fprintf(stderr, "Проблема с определением параметра: {%s}\n",
+		fprintf(stderr, "РџСЂРѕР±Р»РµРјР° СЃ РѕРїСЂРµРґРµР»РµРЅРёРµРј РїР°СЂР°РјРµС‚СЂР°: {%s}\n",
 			settings_buffer[i]);
         exit(1);
 	}
@@ -121,7 +121,7 @@ int read_setting_i()
 	char c;
 	int i;
 	fscanf(settings, "%d", &i);
-	//Cчитывание до новой строки
+	//CС‡РёС‚С‹РІР°РЅРёРµ РґРѕ РЅРѕРІРѕР№ СЃС‚СЂРѕРєРё
 	do {
 		c = getc(settings);
 	} while (c != EOF && c != '\n');
@@ -133,7 +133,7 @@ float read_setting_f()
 	char c;
 	float f;
 	fscanf(settings, "%f", &f);
-	//Cчитывание до новой строки
+	//CС‡РёС‚С‹РІР°РЅРёРµ РґРѕ РЅРѕРІРѕР№ СЃС‚СЂРѕРєРё
 	do {
 		c = getc(settings);
 	} while (c != EOF && c != '\n');
@@ -144,7 +144,7 @@ char *read_setting_s()
 {
 	if (fgets(settings_buffer, SETTINGS_BUFFER_SIZE, settings) != NULL)
 	{
-		// Удаление символа новой строки
+		// РЈРґР°Р»РµРЅРёРµ СЃРёРјРІРѕР»Р° РЅРѕРІРѕР№ СЃС‚СЂРѕРєРё
 		int i = strlen(settings_buffer);
 		settings_buffer[i - 1] = '\0'; 
 		return settings_buffer;
