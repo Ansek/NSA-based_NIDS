@@ -27,11 +27,14 @@ int main()
 	{
 		char *name = read_setting_name();
 		if (strcmp(name, "var1") == 0)
-			printf("var1 - %s\n", read_setting_s());
+			while (is_reading_setting_value())
+				printf("var1 - %s\n", read_setting_s());
 		else if (strcmp(name, "var2") == 0)
-			printf("var2 - %d\n", read_setting_i());
+			while (is_reading_setting_value())
+				printf("var2 - %d\n", read_setting_i());
 		else if (strcmp(name, "var3") == 0)
-			printf("var3 - %f\n", read_setting_f());
+			while (is_reading_setting_value())	
+				printf("var3 - %f\n", read_setting_f());
 	}
 	printf("\nSection 1\n");
 	while (is_reading_settings_section("Section 1"))

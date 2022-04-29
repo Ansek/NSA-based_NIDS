@@ -28,6 +28,13 @@
 */
 Bool is_reading_settings_section(char *section);
 
+
+/**
+@brief Проверяет, имеет ли параметр еще значения
+@return TRUE - найдено еще значение
+*/
+Bool is_reading_setting_value();
+
 /**
 @brief Считывает название параметра настройки
 @return Название параметра
@@ -51,5 +58,7 @@ float read_setting_f();
 @return Значение параметра
 */
 char *read_setting_s();
+
+
 
 #endif 

@@ -15,6 +15,14 @@ char *get_protocol_name(const unsigned char protocol);
 
 void run_sniffer()
 {
+	// Получение параметров
+	while (is_reading_settings_section("Sniffer"))
+	{
+		char *name = read_setting_name();
+		if (strcmp(name, "adapters") == 0)
+			while (is_reading_setting_value())
+				printf("adapter - %s\n", read_setting_s());		
+	}
 	// Инициализация сокетов
 	WSADATA wsadata;
 	WSAStartup(MAKEWORD(2,2), &wsadata);

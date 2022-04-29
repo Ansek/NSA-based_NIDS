@@ -10,6 +10,7 @@
 
 char settings_buffer[SETTINGS_BUFFER_SIZE];	// Буфер для извленичия текста
 FILE *settings;  						    // Объект файла настроек
+Bool is_reading_value;	// Для оповещения о нескольких значений параметра
 
 // Вспомогательная, для проверки на новый параметр
 Bool check_available()
@@ -90,6 +91,20 @@ Bool is_reading_settings_section(char *section)
 	return is_available;
 }
 
+Bool is_reading_setting_value()
+{
+	return is_reading_value;
+}
+
+// Вспомогательная, для проверки наличия значения параметра
+void check_setting_value()
+{
+	char c = getc(settings);
+	if (c != '\n' && c != EOF)
+		is_reading_value = TRUE;
+	ungetc(c, settings);
+}
+
 char *read_setting_name()
 {
 	int i = 0;
@@ -100,7 +115,10 @@ char *read_setting_name()
 		if (settings_buffer[i] == EOF)
 			i = SETTINGS_BUFFER_SIZE;
 		else if (settings_buffer[i] == '=')
+		{
+			check_setting_value();
 			break;
+		}
 	}
 	// Контроль на правильность считывания имени
 	if (i == SETTINGS_BUFFER_SIZE)
@@ -116,38 +134,76 @@ char *read_setting_name()
 	return settings_buffer;
 }
 
-int read_setting_i()
+// Вспомогательная, для проверок после считывания значения
+void check_setting()
 {
 	char c;
-	int i;
-	fscanf(settings, "%d", &i);
+	is_reading_value = FALSE;
 	//Cчитывание до новой строки
 	do {
 		c = getc(settings);
-	} while (c != EOF && c != '\n');
+		// Если обнаружен разделитель
+		if (c == ',')
+		{
+			check_setting_value();
+			break;
+		}
+	} while (c != EOF && c != '\n');	
+}
+
+int read_setting_i()
+{
+	int i;
+	fscanf(settings, "%d", &i);
+	check_setting();
 	return i;
 }
 
 float read_setting_f()
 {
-	char c;
 	float f;
 	fscanf(settings, "%f", &f);
-	//Cчитывание до новой строки
-	do {
-		c = getc(settings);
-	} while (c != EOF && c != '\n');
+	check_setting();
 	return f;
 }
 
 char *read_setting_s()
 {
-	if (fgets(settings_buffer, SETTINGS_BUFFER_SIZE, settings) != NULL)
+	int i = 0;
+	char c;
+	//Cчитывание до новой строки
+	while(i < SETTINGS_BUFFER_SIZE - 1)
 	{
-		// Удаление символа новой строки
-		int i = strlen(settings_buffer);
-		settings_buffer[i - 1] = '\0'; 
-		return settings_buffer;
+		c = getc(settings);
+		// Пропуск двойных кавычек
+		if (c == '"')
+			continue;
+		// Если обнаружен разделитель
+		if (c == ',')
+		{
+			check_setting_value();
+			break;
+		}
+		//Если конец строки
+		if (c == EOF || c == '\n')
+		{
+			is_reading_value = FALSE;
+			break;
+		}
+		settings_buffer[i] = c;
+		i++;
 	}
-	return "";
+	settings_buffer[i] = '\0';
+	// Копирование параметра в новый массив
+	if (i > 0)
+	{
+		char *res = (char *)malloc(i);
+		strcpy(res, settings_buffer);
+		return res;
+	}
+	else
+	{
+		printf("There is no parameter after the delimiter!\n");
+		exit(1);
+	}
 } 
