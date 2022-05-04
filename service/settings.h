@@ -59,6 +59,11 @@ float read_setting_f();
 */
 char *read_setting_s();
 
-
+/**
+@brief Выводит сообщение, что параметр не используется
+@brief и осуществляет переход к следующей строке
+@param name Имя параметра
+*/
+void print_not_used(char *name);
 
 #endif 

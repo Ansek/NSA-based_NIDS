@@ -18,6 +18,7 @@
 #define HOST_NAME_SIZE 		128		// Размер имени хоста
 #define PACKET_BUFFER_SIZE 	65535	// Размер буфера пакета
 
+// Заголовок IP-пакета
 typedef struct IPHeader
 {
 	unsigned char	ver_len;	// Версия и длина заголовка

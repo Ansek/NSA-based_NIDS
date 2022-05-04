@@ -207,3 +207,13 @@ char *read_setting_s()
 		exit(1);
 	}
 } 
+
+void print_not_used(char *name)
+{
+	char c;
+	printf("Parameter \"%s\" not used!\n", name);
+	//Cчитывание до новой строки
+	do {
+		c = getc(settings);
+	} while (c != EOF && c != '\n');
+}

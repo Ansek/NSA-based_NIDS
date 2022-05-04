@@ -13,5 +13,6 @@
 
 #include "settings.h"
 #include "sniffer.h"
+#include "filemanager.h"
 
 #endif

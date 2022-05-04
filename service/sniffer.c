@@ -10,8 +10,12 @@
 
 char packet_buffer[PACKET_BUFFER_SIZE];
 
-// Вспомогательная, для получение имени протокола
+// Вспомогательные функции
+// Инициализация сниффера
+void init_sniffer();
+// Получение имени протокола
 char *get_protocol_name(const unsigned char protocol);
+
 
 void run_sniffer()
 {
@@ -21,7 +25,9 @@ void run_sniffer()
 		char *name = read_setting_name();
 		if (strcmp(name, "adapters") == 0)
 			while (is_reading_setting_value())
-				printf("adapter - %s\n", read_setting_s());		
+				printf("adapter - %s\n", read_setting_s());
+		else
+			print_not_used(name);
 	}
 	// Инициализация сокетов
 	WSADATA wsadata;

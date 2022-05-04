@@ -10,45 +10,16 @@
 
 int main()
 {
-	// ****** Тестирование работы извлечения настроек *********
-	printf("Section 3\n");
-	while (is_reading_settings_section("Section 3"))
-	{
-		char *name = read_setting_name();
-		if (strcmp(name, "var3") == 0)
-			printf("var3 - %d\n", read_setting_i());
-		else if (strcmp(name, "var2") == 0)
-			printf("var2 - %s\n", read_setting_s());
-		else if (strcmp(name, "var1") == 0)
-			printf("var1 - %f\n", read_setting_f());
-	}
-	printf("\nSection 2\n");
-	while (is_reading_settings_section("Section 2"))
-	{
-		char *name = read_setting_name();
-		if (strcmp(name, "var1") == 0)
-			while (is_reading_setting_value())
-				printf("var1 - %s\n", read_setting_s());
-		else if (strcmp(name, "var2") == 0)
-			while (is_reading_setting_value())
-				printf("var2 - %d\n", read_setting_i());
-		else if (strcmp(name, "var3") == 0)
-			while (is_reading_setting_value())	
-				printf("var3 - %f\n", read_setting_f());
-	}
-	printf("\nSection 1\n");
-	while (is_reading_settings_section("Section 1"))
-	{
-		char *name = read_setting_name();
-		if (strcmp(name, "var1") == 0)
-			printf("var1 - %s\n", read_setting_s());
-		else if (strcmp(name, "var2") == 0)
-			printf("var2 - %s\n", read_setting_s());
-	}
-	// *******************************************************
-	
+	// Тестирование логгера
+	run_filemanager();
+	Sleep(1000);
+	short id = reg_file("Log\\test.log");
+	add_fragment(id, "Test Data 1\nIndicator 1\nIndicator 2\n\n");
+	add_fragment(id, "Test Data 2\nIndicator 1\nIndicator 2\n\n");
+	add_fragment(id, "Test Data 3\nIndicator 1\nIndicator 2\n\n");
+
 	// Тестирование получения пакетов
 	run_sniffer();	
-	
+
 	return 0;
 }
