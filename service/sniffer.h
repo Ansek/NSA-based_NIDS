@@ -11,6 +11,7 @@
 
 #include <stdio.h>
 #include <winsock2.h>
+#include <windows.h>
 
 #include "settings.h"
 
@@ -32,6 +33,21 @@ typedef struct IPHeader
 	unsigned long	src;		// IP-адрес отправителя
 	unsigned long	dest;		// IP-адрес получателя
 } IPHeader;
+
+// Данные для адаптера
+typedef struct AdapterData
+{
+	char *addr; 						// Сетевой адрес
+	char buffer[PACKET_BUFFER_SIZE]; 	// Для хранения данных пакета
+} AdapterData;
+
+// Сведение об адаптере
+typedef struct AdapterList
+{
+	AdapterData data;			// Данные для адаптера
+	HANDLE hThread;				// Ссылка на поток
+	struct AdapterList *next;	// Следующий адаптер
+} AdapterList;
 
 /**
 @brief Запускает процесс анализа трафика

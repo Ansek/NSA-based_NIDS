@@ -10,6 +10,7 @@
 #define __MAIN_H__
 
 #include <stdio.h>
+#include <conio.h>
 
 #include "settings.h"
 #include "sniffer.h"

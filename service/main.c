@@ -10,16 +10,9 @@
 
 int main()
 {
-	// Тестирование логгера
-	run_filemanager();
-	Sleep(1000);
-	short id = reg_file("Log\\test.log");
-	add_fragment(id, "Test Data 1\nIndicator 1\nIndicator 2\n\n");
-	add_fragment(id, "Test Data 2\nIndicator 1\nIndicator 2\n\n");
-	add_fragment(id, "Test Data 3\nIndicator 1\nIndicator 2\n\n");
-
 	// Тестирование получения пакетов
 	run_sniffer();	
-
+	
+	while(!kbhit()){}
 	return 0;
 }

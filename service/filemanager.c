@@ -8,8 +8,8 @@
 
 #include "filemanager.h"
 
-FilesList *beg_list = NULL;		// Ссылки на список файлов
-FilesList *end_list = NULL;	
+FilesList *beg_flist = NULL;		// Ссылки на список файлов
+FilesList *end_flist = NULL;	
 short time_sleep;				// Время перерыва между сохранениями данных
 
 // Вспомогательные функции
@@ -26,6 +26,8 @@ void run_filemanager()
 		char *name = read_setting_name();
 		if (strcmp(name, "time_sleep") == 0)
 			time_sleep = read_setting_i();
+		else
+			print_not_used(name);
 	}
 	// Создание потока
 	HANDLE hThread = CreateThread(NULL, 0, fm_thread, NULL, 0, NULL);
@@ -41,17 +43,17 @@ short reg_file(char* name)
 	flist->b_fragment = NULL;
 	flist->e_fragment = NULL;
 	flist->next = NULL;
-	if (beg_list == NULL)
+	if (beg_flist == NULL)
 	{
 		flist->id = 0;
-		beg_list = flist;
-		end_list = flist;
+		beg_flist = flist;
+		end_flist = flist;
 	}
 	else
 	{
-		flist->id = end_list->id + 1;
-		end_list->next = flist;
-		end_list = flist;
+		flist->id = end_flist->id + 1;
+		end_flist->next = flist;
+		end_flist = flist;
 	}
 	return flist->id;
 }
@@ -85,7 +87,7 @@ void add_fragment(short id, char* text)
 
 FilesList *get_file(short id)
 {
-	FilesList *p = beg_list;
+	FilesList *p = beg_flist;
 	while(p != NULL && p->id != id)
 		p = p->next;
 	return p;	
@@ -97,7 +99,7 @@ DWORD WINAPI fm_thread(LPVOID ptr)
 	while (TRUE)
 	{
 		// Поиск файла
-		FilesList *p = beg_list;
+		FilesList *p = beg_flist;
 		while(p != NULL && p->b_fragment != NULL)
 		{
 			// Запись содержимого в файл
