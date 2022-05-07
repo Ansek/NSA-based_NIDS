@@ -1,26 +1,26 @@
 /******************************************************************************
      * File: filemanager.c
-     * Description: Менеджер сохранения промежуточных результатов в файлы.
-     * Created: 3 апреля 2021
-     * Author: Секунов Александр
+     * Description: РњРµРЅРµРґР¶РµСЂ СЃРѕС…СЂР°РЅРµРЅРёСЏ РїСЂРѕРјРµР¶СѓС‚РѕС‡РЅС‹С… СЂРµР·СѓР»СЊС‚Р°С‚РѕРІ РІ С„Р°Р№Р»С‹.
+     * Created: 3 Р°РїСЂРµР»СЏ 2021
+     * Author: РЎРµРєСѓРЅРѕРІ РђР»РµРєСЃР°РЅРґСЂ
 
 ******************************************************************************/
 
 #include "filemanager.h"
 
-FilesList *beg_flist = NULL;		// Ссылки на список файлов
+FilesList *beg_flist = NULL;		// РЎСЃС‹Р»РєРё РЅР° СЃРїРёСЃРѕРє С„Р°Р№Р»РѕРІ
 FilesList *end_flist = NULL;	
-short time_sleep;				// Время перерыва между сохранениями данных
+short time_sleep;				// Р’СЂРµРјСЏ РїРµСЂРµСЂС‹РІР° РјРµР¶РґСѓ СЃРѕС…СЂР°РЅРµРЅРёСЏРјРё РґР°РЅРЅС‹С…
 
-// Вспомогательные функции
-// Получение файла по идентификатору
+// Р’СЃРїРѕРјРѕРіР°С‚РµР»СЊРЅС‹Рµ С„СѓРЅРєС†РёРё
+// РџРѕР»СѓС‡РµРЅРёРµ С„Р°Р№Р»Р° РїРѕ РёРґРµРЅС‚РёС„РёРєР°С‚РѕСЂСѓ
 FilesList *get_file(short id);
-// Поток для переодичного сохранения в файлы
+// РџРѕС‚РѕРє РґР»СЏ РїРµСЂРµРѕРґРёС‡РЅРѕРіРѕ СЃРѕС…СЂР°РЅРµРЅРёСЏ РІ С„Р°Р№Р»С‹
 DWORD WINAPI fm_thread(LPVOID ptr);
 
 void run_filemanager()
 {
-	// Получение настроек
+	// РџРѕР»СѓС‡РµРЅРёРµ РЅР°СЃС‚СЂРѕРµРє
 	while (is_reading_settings_section("FileManager"))
 	{
 		char *name = read_setting_name();
@@ -29,7 +29,7 @@ void run_filemanager()
 		else
 			print_not_used(name);
 	}
-	// Создание потока
+	// РЎРѕР·РґР°РЅРёРµ РїРѕС‚РѕРєР°
 	HANDLE hThread = CreateThread(NULL, 0, fm_thread, NULL, 0, NULL);
 	if (hThread != NULL)
 		printf("File manager started!\n");
@@ -37,7 +37,7 @@ void run_filemanager()
 
 short reg_file(char* name)
 {
-	// Добавление нового файла в список
+	// Р”РѕР±Р°РІР»РµРЅРёРµ РЅРѕРІРѕРіРѕ С„Р°Р№Р»Р° РІ СЃРїРёСЃРѕРє
 	FilesList *flist = (FilesList *)malloc(sizeof(FilesList));
 	flist->name = name;
 	flist->b_fragment = NULL;
@@ -63,7 +63,7 @@ void add_fragment(short id, char* text)
 	FilesList *flist = get_file(id);
 	if (flist != NULL)
 	{
-		// Добавление нового фрагмента для записи в список
+		// Р”РѕР±Р°РІР»РµРЅРёРµ РЅРѕРІРѕРіРѕ С„СЂР°РіРјРµРЅС‚Р° РґР»СЏ Р·Р°РїРёСЃРё РІ СЃРїРёСЃРѕРє
 		Fragment *fr = (Fragment *)malloc(sizeof(Fragment));
 		fr->text = text;
 		fr->next = NULL;
@@ -95,19 +95,19 @@ FilesList *get_file(short id)
 
 DWORD WINAPI fm_thread(LPVOID ptr)
 {
-	// Проверка наличия фрагментов для записи
+	// РџСЂРѕРІРµСЂРєР° РЅР°Р»РёС‡РёСЏ С„СЂР°РіРјРµРЅС‚РѕРІ РґР»СЏ Р·Р°РїРёСЃРё
 	while (TRUE)
 	{
-		// Поиск файла
+		// РџРѕРёСЃРє С„Р°Р№Р»Р°
 		FilesList *p = beg_flist;
 		while(p != NULL && p->b_fragment != NULL)
 		{
-			// Запись содержимого в файл
+			// Р—Р°РїРёСЃСЊ СЃРѕРґРµСЂР¶РёРјРѕРіРѕ РІ С„Р°Р№Р»
 			Fragment *fr = p->b_fragment;
 			FILE *file;
 			if ((file = fopen(p->name, "a")) != NULL)
 			{
-				// Вывод и освобождение ресурсов
+				// Р’С‹РІРѕРґ Рё РѕСЃРІРѕР±РѕР¶РґРµРЅРёРµ СЂРµСЃСѓСЂСЃРѕРІ
 				while (fr != NULL)
 				{
 					fputs(fr->text, file);
@@ -118,7 +118,7 @@ DWORD WINAPI fm_thread(LPVOID ptr)
 					temp = NULL;
 				}
 				fclose(file);
-				// Очистка списка
+				// РћС‡РёСЃС‚РєР° СЃРїРёСЃРєР°
 				p->b_fragment = NULL;
 				p->e_fragment = NULL;
 			}
@@ -129,7 +129,7 @@ DWORD WINAPI fm_thread(LPVOID ptr)
 			};
 			p = p->next;
 		}
-		// Засыпание на заданный период
+		// Р—Р°СЃС‹РїР°РЅРёРµ РЅР° Р·Р°РґР°РЅРЅС‹Р№ РїРµСЂРёРѕРґ
 		Sleep(time_sleep);
 	}
 }
