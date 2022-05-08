@@ -8,14 +8,14 @@
 
 #include "sniffer.h"
 
-char packet_buffer[PACKET_BUFFER_SIZE];
+char package_buffer[PACKAGE_BUFFER_SIZE];
 AdapterList *beg_alist = NULL;		// Ссылки на список адаптеров
 AdapterList *end_alist = NULL;	
 
 // Вспомогательные функции
 // Подключение к адаптеру для прослушивания
 void connection_to_adapter(char *addr);
-// Поток для анализа трафик
+// Поток для анализа трафика
 DWORD WINAPI sn_thread(LPVOID ptr);
 // Получение имени протокола
 char *get_protocol_name(const unsigned char protocol);
@@ -26,6 +26,9 @@ void run_sniffer()
 	WSADATA wsadata;
 	if (WSAStartup(MAKEWORD(2, 2), &wsadata) != NO_ERROR)
 		printf("WinSock initialization failed!\n");
+	
+	// Инициализация анализаторов
+	run_analyzer();
 	
 	// Получение параметров
 	while (is_reading_settings_section("Sniffer"))
@@ -89,28 +92,28 @@ DWORD WINAPI sn_thread(LPVOID ptr)
 	// Просмотр всех пакетов
 	while (TRUE)
 	{
-		int count = recv(s, packet_buffer, PACKET_BUFFER_SIZE, 0);
+		int count = recv(s, package_buffer, PACKAGE_BUFFER_SIZE, 0);
 		if (count >= sizeof(IPHeader))
 		{
 			printf("Adapter %s:\n", data->addr);
 			IN_ADDR addr;
 			// Если пакет пришёл
-			IPHeader  *packet = (IPHeader *)packet_buffer;
+			IPHeader  *package = (IPHeader *)package_buffer;
 			// Вывод протокола
-			printf("%s: ", get_protocol_name(packet->protocol));
+			printf("%s: ", get_protocol_name(package->protocol));
 			// Вывод отправителя 
-			addr.s_addr = packet->src;
+			addr.s_addr = package->src;
 			printf("%s to ", inet_ntoa(addr));
 			// Вывод получателя 
-			addr.s_addr = packet->dest;
+			addr.s_addr = package->dest;
 			printf("%s", inet_ntoa(addr));
 			// Вывод размера
-			unsigned short size = (packet->length << 8) + (packet->length >> 8);
+			unsigned short size = (package->length << 8) + (package->length >> 8);
 			printf(" Size: %d\n", size);
 			// Вывод содержимого после заголовка пакета
 			printf("Data: \n");
 			for (int i = sizeof(IPHeader); i < size; i++)
-				printf("%c", packet_buffer[i]);
+				printf("%c", package_buffer[i]);
 			printf("\n\n");
 		}
 	}
