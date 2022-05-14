@@ -23,7 +23,7 @@ void run_sniffer()
 	// Инициализация сокетов
 	WSADATA wsadata;
 	if (WSAStartup(MAKEWORD(2, 2), &wsadata) != NO_ERROR)
-		printf("WinSock initialization failed!\n");
+		print_msglog("WinSock initialization failed!\n");
 	
 	// Инициализация анализаторов
 	run_analyzer();
@@ -48,7 +48,7 @@ void connection_to_adapter(char *addr)
 	alist->data.addr = addr;
 	alist->hThread	= CreateThread(NULL, 0, sn_thread, &(alist->data), 0, NULL);
 	if (alist->hThread == NULL)
-		printf("Failed to create thread!\n");
+		print_errlog("Failed to create thread!\n");
 	alist->next = NULL;
 	// Добавление его в список
 	if (beg_alist == NULL)
@@ -70,7 +70,7 @@ DWORD WINAPI sn_thread(LPVOID ptr)
 	// Создание сокета
 	SOCKET s = socket(AF_INET, SOCK_RAW, IPPROTO_IP);
 	if (s == INVALID_SOCKET) {
-		printf("Error creating socket: %s\n", WSAGetLastError());
+		print_errlogf("Error creating socket: %s\n", WSAGetLastError());
 		WSACleanup();
 		exit(5);
 	}
@@ -85,7 +85,7 @@ DWORD WINAPI sn_thread(LPVOID ptr)
 	unsigned long flag = TRUE;
 	ioctlsocket(s, SIO_RCVALL, &flag);
 	
-	printf("Listening on adapter with address %s.\n", data->addr);
+	print_msglogf("Listening on adapter with address %s.\n", data->addr);
 
 	// Просмотр всех пакетов
 	while (TRUE)

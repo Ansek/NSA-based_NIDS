@@ -95,7 +95,7 @@ AnalyzerList *create_analyzer(Bool lock)
 		al->data.buffer = (char *)malloc(analyzer_buffer_size);
 		al->hThread	= CreateThread(NULL, 0, an_thread, &(al->data), 0, NULL);
 		if (al->hThread == NULL)
-			printf("Failed to create thread!\n");
+			print_errlog("Failed to create thread!\n");
 		// Добавление его в циклический список
 		if (alist == NULL)
 		{
@@ -110,7 +110,7 @@ AnalyzerList *create_analyzer(Bool lock)
 	}
 	else
 	{
-		printf("The maximum number of analyzer analyzers has been reached [%d]!\n",
+		print_errlogf("The maximum number of analyzer analyzers has been reached [%d]!\n",
 			max_alist_count);
 	}
 	ReleaseMutex(list_mutex);
@@ -153,7 +153,7 @@ AnalyzerList *get_free_analyzer(unsigned short length)
 			// и все анализаторы полностью заполненые
 			if (al == NULL && filled_count == alist_count)
 			{
-				printf("Search analyzer to reset.\n");
+				print_msglog("Search analyzer to reset.\n");
 				do
 				{
 					if (lock_analyzer(p))
@@ -163,7 +163,7 @@ AnalyzerList *get_free_analyzer(unsigned short length)
 						{
 							al = p;
 							al->data.w_cursor = 0; // Сброс курсора записи в начало
-							printf("Analyzer #%d has been reset.\n", al->data.id);
+							print_msglogf("Analyzer #%d has been reset.\n", al->data.id);
 						}
 						else
 							unlock_analyzer(p);
@@ -225,7 +225,7 @@ Data:\n";
 DWORD WINAPI an_thread(LPVOID ptr)
 {
 	AnalyzerData* data = (AnalyzerData *)ptr;	
-	printf("Analyzer #%d launched\n", data->id);
+	print_msglogf("Analyzer #%d launched\n", data->id);
 	while (TRUE)
 	{
 		if (data->pack_count)
@@ -243,13 +243,14 @@ DWORD WINAPI an_thread(LPVOID ptr)
 			unsigned short size = (package->length << 8) + (package->length >> 8);
 			
 			WaitForSingleObject(print_mutex, INFINITE);
-			printf(package_info, data->id, adapter_addr, 
+			print_msglogf(package_info, data->id, adapter_addr, 
 				get_protocol_name(package->protocol),
 				inet_ntoa(src_addr), inet_ntoa(dest_addr), 
 				size);
-			for (int i = sizeof(IPHeader); i < size; i++)
-				printf("%c", package_data[i]);
-			printf("\n\n");	
+			if (get_msg_log_enabled())
+				for (int i = sizeof(IPHeader); i < size; i++)
+					print_msglogc(package_data[i]);
+			print_msglog("\n\n");	
 			ReleaseMutex(print_mutex);
 
 			dec_pack_count(data);

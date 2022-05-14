@@ -49,4 +49,40 @@ short reg_file(char* filename);
 */
 void add_fragment(short id, char* text);
 
+/**
+@brief Выводит текст сообщения пользователю
+@param text - Текст сообщения
+*/
+void print_msglog(const char* text);
+
+/**
+@brief Вывод одного символа 
+@param symbol - Код символа
+*/
+void print_msglogc(const char symbol);
+
+/**
+@brief Выводит форматированный текст сообщения пользователю
+@param text - Текст сообщения
+*/
+void print_msglogf(const char* text, ...);
+
+/**
+@brief Выводит текст ошибки пользователю
+@param text - Текст ошибки
+*/
+void print_errlog(const char* text);
+
+/**
+@brief Выводит форматированный текст ошибки пользователю
+@param text - Текст ошибки
+*/
+void print_errlogf(const char* text, ...);
+
+/**
+@brief Возращает флаг доступности вывода сообщений пользователю
+@param symbol - Код символа
+*/
+Bool get_msg_log_enabled();
+
 #endif

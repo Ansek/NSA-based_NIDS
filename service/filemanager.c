@@ -8,8 +8,10 @@
 
 #include "filemanager.h"
 
-FilesList *beg_flist = NULL;		// Ссылки на список файлов
+FilesList *beg_flist = NULL;	// Ссылки на список файлов
 FilesList *end_flist = NULL;	
+Bool msg_log_enabled;			// Флаг вывода сообщений пользователю
+Bool err_log_enabled;			// Флаг вывода ошибок пользователю
 short time_sleep;				// Время перерыва между сохранениями данных
 
 // Вспомогательные функции
@@ -24,7 +26,11 @@ void run_filemanager()
 	while (is_reading_settings_section("FileManager"))
 	{
 		char *name = read_setting_name();
-		if (strcmp(name, "time_sleep") == 0)
+		if (strcmp(name, "msg_log_enabled") == 0)
+			msg_log_enabled = read_setting_i();
+		else if (strcmp(name, "err_log_enabled") == 0)
+			err_log_enabled = read_setting_i();
+		else if (strcmp(name, "time_sleep") == 0)
 			time_sleep = read_setting_i();
 		else
 			print_not_used(name);
@@ -32,7 +38,7 @@ void run_filemanager()
 	// Создание потока
 	HANDLE hThread = CreateThread(NULL, 0, fm_thread, NULL, 0, NULL);
 	if (hThread != NULL)
-		printf("File manager started!\n");
+		print_msglog("File manager started!\n");
 }
 
 short reg_file(char* name)
@@ -80,7 +86,7 @@ void add_fragment(short id, char* text)
 	}
 	else
 	{
-		printf("Trying to add a fragment to an unrelated file!\n");
+		print_errlog("Trying to add a fragment to an unrelated file");
 		exit(2);
 	}
 }
@@ -124,7 +130,7 @@ DWORD WINAPI fm_thread(LPVOID ptr)
 			}
 			else
 			{
-				printf("Failed to create file \"%s\"!\n", p->name);
+				print_errlogf("Failed to create file \"%s\"", p->name);
 				exit(2);
 			};
 			p = p->next;
@@ -132,4 +138,54 @@ DWORD WINAPI fm_thread(LPVOID ptr)
 		// Засыпание на заданный период
 		Sleep(time_sleep);
 	}
+}
+
+void print_msglog(const char* text)
+{
+	if (msg_log_enabled)
+	{
+		puts(text);
+	}
+}
+
+void print_msglogc(const char symbol)
+{
+	putchar(symbol);
+}
+
+void print_msglogf(const char* text, ...)
+{
+	if (msg_log_enabled)
+	{
+		va_list ap;
+		va_start(ap, text);
+		vprintf(text, ap);
+		va_end(ap);
+	}	
+}
+
+void print_errlog(const char* text)
+{
+	if (err_log_enabled)
+	{
+		printf("Error: %s!\n", text);
+	}
+}
+
+void print_errlogf(const char* text, ...)
+{
+	if (err_log_enabled)
+	{
+		va_list ap;
+		va_start(ap, text);
+		puts("Error: ");
+		vprintf(text, ap);
+		puts("!\n");
+		va_end(ap);
+	}	
+}
+
+Bool get_msg_log_enabled()
+{
+	return msg_log_enabled;
 }

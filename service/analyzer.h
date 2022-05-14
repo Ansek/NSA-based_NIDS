@@ -9,7 +9,7 @@
 #ifndef __ANALYZER_H__
 #define __ANALYZER_H__
 
-#include "settings.h"
+#include "filemanager.h"
 
 #include <windows.h>
 
