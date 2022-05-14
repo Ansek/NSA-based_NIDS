@@ -10,6 +10,7 @@
 #define __ANALYZER_H__
 
 #include "settings.h"
+
 #include <windows.h>
 
 #define PACKAGE_BUFFER_SIZE 	65535	// Размер буфера пакета
@@ -29,11 +30,23 @@ typedef struct IPHeader
 	unsigned long	dest;		// IP-адрес получателя
 } IPHeader;
 
+// Данные для адаптера
+typedef struct AdapterData
+{
+	char *addr; 						// Сетевой адрес
+	char buffer[PACKAGE_BUFFER_SIZE]; 	// Для хранения данных пакета
+} AdapterData;
+
 // Данные для анализатора
 typedef struct AnalyzerData
 {
 	unsigned short id;			// Идентификатор анализатора
-	unsigned short pack_count; 	// Количество непроверенных пакетов	
+	size_t pack_count; 			// Количество непроверенных пакетов	
+	size_t r_cursor;			// Курсор для чтения данных
+	size_t w_cursor;			// Курсор для записи данных
+	size_t e_cursor;			// Курсор для фиксирования конца текущего пакета
+	Bool lock; 					// Флаг, что анализатор занят другим потоком
+	HANDLE mutex;				// Мьютекс для корректного изменения данных 
 	char *buffer;				// Ссылка на буфер данных
 } AnalyzerData;
 
@@ -52,8 +65,16 @@ void run_analyzer();
 
 /**
 @brief Добавляет пакет в очередь на анализ
-@param pack Ссылка на пакет
+@param data Данные о пакете
 */
-void analyze_package(char *pack);
+void analyze_package(AdapterData *data);
+
+// Получение имени протокола
+/**
+@brief Добавляет пакет в очередь на анализ
+@param protocol Идентификатор протокола
+@return Название протокола
+*/
+char *get_protocol_name(const unsigned char protocol);
 
 #endif

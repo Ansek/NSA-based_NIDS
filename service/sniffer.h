@@ -17,13 +17,6 @@
 #define SIO_RCVALL 0x98000001 		// Для приёма всех пакетов из сети
 #define HOST_NAME_SIZE 		128		// Размер имени хоста
 
-// Данные для адаптера
-typedef struct AdapterData
-{
-	char *addr; 						// Сетевой адрес
-	char buffer[PACKAGE_BUFFER_SIZE]; 	// Для хранения данных пакета
-} AdapterData;
-
 // Список сведений для адаптера
 typedef struct AdapterList
 {

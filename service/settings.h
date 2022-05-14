@@ -14,7 +14,7 @@
 #include <string.h>
 
 #define FILE_NAME "config.ini"		// Имя файла настроек
-#define SETTINGS_BUFFER_SIZE 64		// Размеор буфера для извленичия текста
+#define SETTINGS_BUFFER_SIZE 64		// Размер буфера для извлечения текста
 
 //typedef enum { FALSE, TRUE } Bool;
 #define Bool char
@@ -27,7 +27,6 @@
 @return TRUE - в секции еще остались настройки
 */
 Bool is_reading_settings_section(char *section);
-
 
 /**
 @brief Проверяет, имеет ли параметр еще значения

@@ -17,8 +17,6 @@ AdapterList *end_alist = NULL;
 void connection_to_adapter(char *addr);
 // Поток для анализа трафика
 DWORD WINAPI sn_thread(LPVOID ptr);
-// Получение имени протокола
-char *get_protocol_name(const unsigned char protocol);
 
 void run_sniffer()
 {
@@ -88,33 +86,14 @@ DWORD WINAPI sn_thread(LPVOID ptr)
 	ioctlsocket(s, SIO_RCVALL, &flag);
 	
 	printf("Listening on adapter with address %s.\n", data->addr);
-	
+
 	// Просмотр всех пакетов
 	while (TRUE)
 	{
-		int count = recv(s, package_buffer, PACKAGE_BUFFER_SIZE, 0);
+		int count = recv(s, data->buffer, PACKAGE_BUFFER_SIZE, 0);
 		if (count >= sizeof(IPHeader))
 		{
-			printf("Adapter %s:\n", data->addr);
-			IN_ADDR addr;
-			// Если пакет пришёл
-			IPHeader  *package = (IPHeader *)package_buffer;
-			// Вывод протокола
-			printf("%s: ", get_protocol_name(package->protocol));
-			// Вывод отправителя 
-			addr.s_addr = package->src;
-			printf("%s to ", inet_ntoa(addr));
-			// Вывод получателя 
-			addr.s_addr = package->dest;
-			printf("%s", inet_ntoa(addr));
-			// Вывод размера
-			unsigned short size = (package->length << 8) + (package->length >> 8);
-			printf(" Size: %d\n", size);
-			// Вывод содержимого после заголовка пакета
-			printf("Data: \n");
-			for (int i = sizeof(IPHeader); i < size; i++)
-				printf("%c", package_buffer[i]);
-			printf("\n\n");
+			analyze_package(data);
 		}
 	}
 }
