@@ -12,8 +12,10 @@
 #include "filemanager.h"
 
 #include <windows.h>
+#include <time.h>
 
-#define PACKAGE_BUFFER_SIZE 	65535	// Размер буфера пакета
+#define PACKAGE_DATA_SIZE sizeof(void *) * 2  // Размер PackageData без буфера 
+#define PACKAGE_BUFFER_SIZE            65535  // Размер буфера пакета
 
 // Заголовок IP-пакета
 typedef struct IPHeader
@@ -34,19 +36,29 @@ typedef struct IPHeader
 typedef struct AdapterData
 {
 	char *addr; 						// Сетевой адрес
+	FID fid;							// Идентификатор на файл
 	char buffer[PACKAGE_BUFFER_SIZE]; 	// Для хранения данных пакета
 } AdapterData;
+
+// Тип данных для перемещения по буферу AnalyzerData
+typedef struct PackageData
+{
+	AdapterData *adapter;		// Ссылка на информацию об адаптере
+	struct PackageData *next; 	// Следующий адрес в буфере
+	IPHeader header;			// Заголовок пакета
+	char data;					// Начало данных пакета
+} PackageData;
 
 // Данные для анализатора
 typedef struct AnalyzerData
 {
 	unsigned short id;			// Идентификатор анализатора
+	PackageData *r_package;		// Указатель для чтения пакетов
+	PackageData *w_package;		// Указатель для записи пакетов
 	size_t pack_count; 			// Количество непроверенных пакетов	
-	size_t r_cursor;			// Курсор для чтения данных
-	size_t w_cursor;			// Курсор для записи данных
-	size_t e_cursor;			// Курсор для фиксирования конца текущего пакета
 	Bool lock; 					// Флаг, что анализатор занят другим потоком
-	HANDLE mutex;				// Мьютекс для корректного изменения данных 
+	Bool read;					// Флаг, что выполняется чтение
+	HANDLE mutex;				// Мьютекс для ожидания чтения при записи
 	char *buffer;				// Ссылка на буфер данных
 } AnalyzerData;
 
@@ -69,9 +81,8 @@ void run_analyzer();
 */
 void analyze_package(AdapterData *data);
 
-// Получение имени протокола
 /**
-@brief Добавляет пакет в очередь на анализ
+@brief Получение имени протокола
 @param protocol Идентификатор протокола
 @return Название протокола
 */

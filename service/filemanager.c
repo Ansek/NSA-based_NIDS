@@ -9,19 +9,23 @@
 #include "filemanager.h"
 
 FilesList *beg_flist = NULL;	// Ссылки на список файлов
-FilesList *end_flist = NULL;	
+FilesList *end_flist = NULL;
+HANDLE print_mutex;				// Мьютекс для контроля вывода текста
+	
 Bool msg_log_enabled;			// Флаг вывода сообщений пользователю
 Bool err_log_enabled;			// Флаг вывода ошибок пользователю
 short time_sleep;				// Время перерыва между сохранениями данных
 
 // Вспомогательные функции
 // Получение файла по идентификатору
-FilesList *get_file(short id);
+FilesList *get_file(FID id);
 // Поток для переодичного сохранения в файлы
 DWORD WINAPI fm_thread(LPVOID ptr);
 
 void run_filemanager()
 {
+	print_mutex = CreateMutex(NULL, FALSE, NULL);
+		
 	// Получение настроек
 	while (is_reading_settings_section("FileManager"))
 	{
@@ -38,16 +42,49 @@ void run_filemanager()
 	// Создание потока
 	HANDLE hThread = CreateThread(NULL, 0, fm_thread, NULL, 0, NULL);
 	if (hThread != NULL)
-		print_msglog("File manager started!\n");
+		print_msglog("File manager started!");
 }
 
-short reg_file(char* name)
+FID open_file(const char *filename)
+{
+	FILE *file = fopen(filename, "a");
+	// Создание директории по необходимости
+	if (file == NULL)
+	{
+		// Попытка создать недостающую директорию
+		const char *end = filename;	
+		while (*end != '\0')
+		{
+			if (*end == '\\')
+			{
+				// Попытка создать директорию
+				short size = end - filename + 1;
+				char *dir = (char *)malloc(size);
+				strncpy(dir, filename, size);
+				dir[size - 1] = '\0';
+				mkdir(dir);
+				free(dir);
+				// Повторная помытка создания файла				
+				file = fopen(filename, "a");
+				if (file != NULL)
+					break;
+			}
+			end++;
+		}
+	}
+	if (file == NULL)
+	{
+		print_errlogf("Failed to create file \"%s\"", filename);
+		exit(2);
+	};
+	return add_to_flist(file);
+}
+
+FID add_to_flist(FILE *file)
 {
 	// Добавление нового файла в список
 	FilesList *flist = (FilesList *)malloc(sizeof(FilesList));
-	flist->name = name;
-	flist->b_fragment = NULL;
-	flist->e_fragment = NULL;
+	flist->file = file;
 	flist->next = NULL;
 	if (beg_flist == NULL)
 	{
@@ -64,81 +101,27 @@ short reg_file(char* name)
 	return flist->id;
 }
 
-void add_fragment(short id, char* text)
+void fprint_s(FID id, const char *text)
 {
 	FilesList *flist = get_file(id);
-	if (flist != NULL)
-	{
-		// Добавление нового фрагмента для записи в список
-		Fragment *fr = (Fragment *)malloc(sizeof(Fragment));
-		fr->text = text;
-		fr->next = NULL;
-		if (flist->b_fragment == NULL)
-		{
-			flist->b_fragment = fr;
-			flist->e_fragment = fr;
-		}
-		else
-		{
-			flist->e_fragment->next = fr;
-			flist->e_fragment = fr;
-		}
-	}
-	else
-	{
-		print_errlog("Trying to add a fragment to an unrelated file");
-		exit(2);
-	}
+	fputs(text, flist->file);
 }
 
-FilesList *get_file(short id)
+void fprint_n(FID id, const char *text, size_t size)
 {
-	FilesList *p = beg_flist;
-	while(p != NULL && p->id != id)
-		p = p->next;
-	return p;	
+	FilesList *flist = get_file(id);
+	fwrite(text, size, 1, flist->file);
 }
 
-DWORD WINAPI fm_thread(LPVOID ptr)
+void fprint_f(FID id, const char *text, ...)
 {
-	// Проверка наличия фрагментов для записи
-	while (TRUE)
-	{
-		// Поиск файла
-		FilesList *p = beg_flist;
-		while(p != NULL && p->b_fragment != NULL)
-		{
-			// Запись содержимого в файл
-			Fragment *fr = p->b_fragment;
-			FILE *file;
-			if ((file = fopen(p->name, "a")) != NULL)
-			{
-				// Вывод и освобождение ресурсов
-				while (fr != NULL)
-				{
-					fputs(fr->text, file);
-					Fragment *temp = fr;
-					fr = fr->next;
-					free(temp->text);
-					free(temp);
-					temp = NULL;
-				}
-				fclose(file);
-				// Очистка списка
-				p->b_fragment = NULL;
-				p->e_fragment = NULL;
-			}
-			else
-			{
-				print_errlogf("Failed to create file \"%s\"", p->name);
-				exit(2);
-			};
-			p = p->next;
-		}
-		// Засыпание на заданный период
-		Sleep(time_sleep);
-	}
+	FilesList *flist = get_file(id);
+	va_list ap;
+	va_start(ap, text);
+	vfprintf(flist->file, text, ap);
+	va_end(ap);
 }
+
 
 void print_msglog(const char* text)
 {
@@ -178,9 +161,11 @@ void print_errlogf(const char* text, ...)
 	{
 		va_list ap;
 		va_start(ap, text);
-		puts("Error: ");
+		WaitForSingleObject(print_mutex, INFINITE);
+		printf("Error: ");
 		vprintf(text, ap);
-		puts("!\n");
+		puts("!");
+		ReleaseMutex(print_mutex);
 		va_end(ap);
 	}	
 }
@@ -188,4 +173,38 @@ void print_errlogf(const char* text, ...)
 Bool get_msg_log_enabled()
 {
 	return msg_log_enabled;
+}
+
+void lock_file()
+{
+	WaitForSingleObject(print_mutex, INFINITE);
+}
+
+void unlock_file()
+{
+	ReleaseMutex(print_mutex);
+}
+
+FilesList *get_file(FID id)
+{
+	FilesList *p = beg_flist;
+	while(p != NULL && p->id != id)
+		p = p->next;
+	return p;	
+}
+
+DWORD WINAPI fm_thread(LPVOID ptr)
+{
+	while (TRUE)
+	{
+		FilesList *p = beg_flist;
+		// Запись данных из буфера в файл
+		while(p != NULL)
+		{
+			fflush(p->file);
+			p = p->next;
+		}
+		// Засыпание на заданный период
+		Sleep(time_sleep);
+	}
 }

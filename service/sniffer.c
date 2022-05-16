@@ -9,8 +9,9 @@
 #include "sniffer.h"
 
 char package_buffer[PACKAGE_BUFFER_SIZE];
-AdapterList *beg_alist = NULL;		// Ссылки на список адаптеров
+AdapterList *beg_alist = NULL;			// Ссылки на список адаптеров
 AdapterList *end_alist = NULL;	
+const char *adapter_log_dirname = NULL;	// Каталог для хранения логов адаптера
 
 // Вспомогательные функции
 // Подключение к адаптеру для прослушивания
@@ -35,6 +36,8 @@ void run_sniffer()
 		if (strcmp(name, "adapters") == 0)
 			while (is_reading_setting_value())
 				connection_to_adapter(read_setting_s());
+		else if (strcmp(name, "adapter_log_dirname") == 0)
+			adapter_log_dirname = read_setting_s();
 		else
 			print_not_used(name);
 	}
@@ -43,9 +46,17 @@ void run_sniffer()
 // Подключение к адаптеру для прослушивания
 void connection_to_adapter(char *addr)
 {
+	// Формирование имени файлов логов
+	if (adapter_log_dirname == NULL)
+		adapter_log_dirname = "LOG//";
+	char filename[FILE_NAME_SIZE];
+	strcpy(filename, adapter_log_dirname);
+	strcat(filename, addr);
+	strcat(filename, ".log");
 	// Создание отдельного потока
 	AdapterList *alist = (AdapterList *)malloc(sizeof(AdapterList));
 	alist->data.addr = addr;
+	alist->data.fid = open_file(filename);
 	alist->hThread	= CreateThread(NULL, 0, sn_thread, &(alist->data), 0, NULL);
 	if (alist->hThread == NULL)
 		print_errlog("Failed to create thread!\n");

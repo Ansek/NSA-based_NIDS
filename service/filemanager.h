@@ -10,23 +10,18 @@
 #define __FILEMANAGER_H__
 
 #include <windows.h>
+#include <dir.h>
 
 #include "settings.h"
 
-// Фрагмент текста, который надо сохранить
-typedef struct Fragment
-{
-	char *text;					// Содержимое текста
-	struct Fragment *next;		// Ссылка на следующий фрагмент
-} Fragment;
+#define FILE_NAME_SIZE 256
+#define FID unsigned char
 
 // Файл в который надо сохранить фрагменты
 typedef struct FilesList
 {
-	short id;					// Идентификатор файла	
-	char *name;					// Имя файла
-	Fragment *b_fragment;		// Ссылка на первый фрагмент
-	Fragment *e_fragment;		// Ссылка на последний фрагмент
+	FID id;						// Идентификатор файла	
+	FILE *file;					// Идентификатор потока файла
 	struct FilesList *next;		// Ссылка на следующий файл
 } FilesList;
 
@@ -36,18 +31,40 @@ typedef struct FilesList
 void run_filemanager();
 
 /**
-@brief Регистрирует новый файл для записи
+@brief Открывает файл
 @param filename Имя файла
-@return Идентификатор на очередь 
+@return Идентификатор для доступа к файлу
 */
-short reg_file(char* filename);
+FID open_file(const char *filename);
 
 /**
-@brief Добавление фрагмента для сохранения в файл
-@param id Имя файла
-@param text Содержимое текста
+@brief Добавляет файл в список
+@param file Ссылка на файл
+@return Идентификатор для доступа к файлу
 */
-void add_fragment(short id, char* text);
+FID add_to_flist(FILE *file);
+
+/**
+@brief Записывает строку в файл
+@param id Идентификатор для доступа к файлу
+@param text Текст для записи
+*/
+void fprint_s(FID id, const char *text);
+
+/**
+@brief Записывает строку определенного размера в файл
+@param id Идентификатор для доступа к файлу
+@param text Текст для записи
+@param size Размер данных
+*/
+void fprint_n(FID id, const char *text, size_t size);
+
+/**
+@brief Записывает форматированную строку в файл
+@param id Идентификатор для доступа к файлу
+@param text Текст для записи
+*/
+void fprint_f(FID id, const char* text, ...);
 
 /**
 @brief Выводит текст сообщения пользователю
@@ -84,5 +101,15 @@ void print_errlogf(const char* text, ...);
 @param symbol - Код символа
 */
 Bool get_msg_log_enabled();
+
+/**
+@brief Блокирование потока для записи в файла
+*/
+void lock_file();
+
+/**
+@brief Блокирование потока для записи в файла
+*/
+void unlock_file();
 
 #endif

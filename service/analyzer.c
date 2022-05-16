@@ -15,22 +15,17 @@ unsigned short adapter_data_size;	// Размер данных адаптера 
 size_t analyzer_buffer_size;		// Максимальный размер буфера анализатора
 HANDLE list_mutex;					// Мьютекс для работы со списком
 HANDLE lock_mutex;					// Мьютекс для контроля блокировок
-HANDLE print_mutex;					// Мьютекс для контроля вывода текста
 
 // Вспомогательные функции
 // Создает анализатор в новом потоке
 AnalyzerList *create_analyzer(Bool unlock);
 // Получает свободный анализатор
-AnalyzerList *get_free_analyzer(unsigned short length);
+AnalyzerData *get_free_analyzer(size_t length);
 // Блокировка анализатора
 // @return TRUE - если заблокирован данным потоком
-Bool lock_analyzer(AnalyzerList *al);
+Bool lock_analyzer(AnalyzerData *data);
 // Разблокировка анализатора
-void unlock_analyzer(AnalyzerList *al);
-// Увеличение параметра количества обрабатываемых пакетов
-void inc_pack_count(AnalyzerData *data);
-// Уменьшение параметра количества обрабатываемых пакетов
-void dec_pack_count(AnalyzerData *data);
+void unlock_analyzer(AnalyzerData *data);
 // Поток для проверки пакетов
 DWORD WINAPI an_thread(LPVOID ptr);
 
@@ -39,8 +34,7 @@ void run_analyzer()
 	unsigned short min_alist_count;
 	list_mutex = CreateMutex(NULL, FALSE, NULL);
 	lock_mutex = CreateMutex(NULL, FALSE, NULL);
-	print_mutex = CreateMutex(NULL, FALSE, NULL);
-	
+		
 	// Получение параметров
 	while (is_reading_settings_section("Analyzer"))
 	{
@@ -50,10 +44,8 @@ void run_analyzer()
 		else if (strcmp(name, "max_analyzer_count") == 0)
 			max_alist_count = read_setting_i();
 		else if (strcmp(name, "max_packet_in_analyzer") == 0)
-		{
-			analyzer_buffer_size = read_setting_i() * sizeof(AdapterData);
-			adapter_data_size = sizeof(AdapterData) - PACKAGE_BUFFER_SIZE - 1;
-		}
+			analyzer_buffer_size = read_setting_i() *
+				(PACKAGE_DATA_SIZE + PACKAGE_BUFFER_SIZE);
 		else
 			print_not_used(name);
 	}
@@ -67,13 +59,17 @@ void analyze_package(AdapterData *data)
 {
 	IPHeader *package = (IPHeader *)data->buffer;
 	unsigned short len = (package->length << 8) + (package->length >> 8);
-	size_t size = len + adapter_data_size;
-	AnalyzerList *al = get_free_analyzer(size);
-	// Копирование информации в анализатор
-	memcpy((al->data.buffer + al->data.w_cursor), data, size);
-	al->data.w_cursor += size;
-	inc_pack_count(&al->data);
-	unlock_analyzer(al);
+	size_t size = len + PACKAGE_DATA_SIZE;
+	AnalyzerData *adata = get_free_analyzer(size);
+	// Копирование информации в буфер анализатора
+	WaitForSingleObject(adata->mutex, INFINITE);
+	adata->w_package->adapter = data;
+	adata->w_package->next = (PackageData *)((char *)adata->w_package + size);
+	memcpy(&(adata->w_package->header), data->buffer, len);
+	adata->w_package = adata->w_package->next;
+	adata->pack_count++;
+	ReleaseMutex(adata->mutex);
+	unlock_analyzer(adata);
 }
 
 AnalyzerList *create_analyzer(Bool lock)
@@ -87,12 +83,13 @@ AnalyzerList *create_analyzer(Bool lock)
 		alist_count++;
 		al->data.id = alist_count;
 		al->data.pack_count = 0;
-		al->data.r_cursor = 0;
-		al->data.w_cursor = 0;
-		al->data.e_cursor = 0;
+		al->data.read = FALSE;
 		al->data.lock = lock;
 		al->data.mutex = CreateMutex(NULL, FALSE, NULL);
 		al->data.buffer = (char *)malloc(analyzer_buffer_size);
+		al->data.r_package = (PackageData *)(PackageData *)al->data.buffer;
+		al->data.w_package = (PackageData *)(PackageData *)al->data.buffer;
+		al->data.r_package->adapter = NULL; // Как признак отсутствия пакета
 		al->hThread	= CreateThread(NULL, 0, an_thread, &(al->data), 0, NULL);
 		if (al->hThread == NULL)
 			print_errlog("Failed to create thread!\n");
@@ -106,88 +103,121 @@ AnalyzerList *create_analyzer(Bool lock)
 		{
 			al->next = alist->next;
 			alist->next = al;
+			alist = alist->next;
 		}
 	}
 	else
 	{
-		print_errlogf("The maximum number of analyzer analyzers has been reached [%d]!\n",
+		print_errlogf("The maximum number of analyzers has been reached [%d]",
 			max_alist_count);
 	}
 	ReleaseMutex(list_mutex);
 	return al;
 }
 
-AnalyzerList *get_free_analyzer(unsigned short length)
+AnalyzerData *get_free_analyzer(size_t length)
 {
 	AnalyzerList *p = alist;
 	AnalyzerList *al = NULL;
 	unsigned short filled_count = 0;
 	do
 	{	
+		char *buffer_top = (p->data.buffer + analyzer_buffer_size);
 		// Проверяем, что анализатор не заблокирован другим потоком
-		if (lock_analyzer(p))
-		{
-			// Смотрим размер свободного места после курсора записи
-			if (length < analyzer_buffer_size - p->data.w_cursor)
+		if (lock_analyzer(&p->data))
+		{	
+			char *r_cursor = (char *)p->data.r_package;
+			char *w_cursor = (char *)p->data.w_package;
+			// Ищем свободное место
+			if (r_cursor < w_cursor)
 			{
-				al = p;
+				// После указателя записи
+				if (length <= (buffer_top - w_cursor))
+					al = p;
+				// Перед указателем чтения
+				else if (length <= r_cursor - p->data.buffer)
+				{
+					al = p;
+					// Поиск последнего пакета
+					PackageData *pd = al->data.r_package;
+					while (pd->next != al->data.w_package)
+						pd = pd->next;				
+					// Сброс записи на начало буфера
+					al->data.w_package = (PackageData *)al->data.buffer; 
+					pd->next = al->data.w_package;
+				}
+					
 			}
-			// и перед курсором чтения
-			// (При блокировке курсор чтения не должен опускаться)
-			else if (length < p->data.r_cursor)
+			else if (r_cursor > w_cursor)
 			{
-				al = p;
-				al->data.w_cursor = 0; // Сброс курсора записи в начало
+				// Между указателями
+				if (length <= r_cursor - w_cursor)
+					al = p;
 			}
-			else
+			else 
 			{
-				filled_count++;
-				unlock_analyzer(p);
+				// Если указывает на обработанный пакет
+				if (p->data.r_package->adapter == NULL)
+					al = p;
 			}
 		}
 		// Создаем новый анализатор, если не получилось найти свободный	
-		if (p->next == alist && al == NULL)
+		if (al == NULL)
 		{
-			al = create_analyzer(TRUE);
-			// Если нельзя больше создавать анализаторы из-за ограничения
-			// и все анализаторы полностью заполненые
-			if (al == NULL && filled_count == alist_count)
+			filled_count++;
+			unlock_analyzer(&p->data);
+			if (p->next == alist)
 			{
-				print_msglog("Search analyzer to reset.\n");
-				do
+				al = create_analyzer(TRUE);
+				// Если нельзя больше создавать анализаторы из-за ограничения
+				// и все анализаторы полностью заполненые
+				if (al == NULL && filled_count == alist_count)
 				{
-					if (lock_analyzer(p))
+					print_msglog("Search analyzer to reset.\n");
+					do
 					{
-						// Проверка доступности сброса
-						if (length < analyzer_buffer_size - p->data.e_cursor)
+						if (lock_analyzer(&p->data))
 						{
-							al = p;
-							al->data.w_cursor = 0; // Сброс курсора записи в начало
-							print_msglogf("Analyzer #%d has been reset.\n", al->data.id);
+							// Проверка доступности сброса
+							char *next = (char *)p->data.r_package->next;
+							if (length <= buffer_top - next)
+							{
+								al = p;
+								// Сброс записи на начало буфера
+								al->data.w_package = al->data.r_package->next;
+								WaitForSingleObject(al->data.mutex, INFINITE);
+								if (al->data.read)
+									al->data.pack_count = 1;
+								else
+									al->data.pack_count = 0;
+								ReleaseMutex(al->data.mutex);
+								print_msglogf("Analyzer #%d has been reset.\n", 
+									al->data.id);
+							}
+							else
+								unlock_analyzer(&p->data);
 						}
-						else
-							unlock_analyzer(p);
+						p = p->next;
 					}
-					p = p->next;
+					while (al == NULL);
 				}
-				while (al == NULL);
 			}
 		}
 		p = p->next;
 	}
 	while (al == NULL);
-	return al;
+	return &(al->data);
 }
 
 // Блокировка анализатора
-Bool lock_analyzer(AnalyzerList *al)
+Bool lock_analyzer(AnalyzerData *data)
 {
 	Bool l = FALSE;
 	WaitForSingleObject(lock_mutex, INFINITE);
 	// Проверяем, что анализатор свободен
-	if (!al->data.lock)
+	if (!data->lock)
 	{
-		al->data.lock = TRUE;
+		data->lock = TRUE;
 		l = TRUE;
 	}
 	ReleaseMutex(lock_mutex);
@@ -195,32 +225,16 @@ Bool lock_analyzer(AnalyzerList *al)
 }
 
 // Разблокировка анализатора
-void unlock_analyzer(AnalyzerList *al)
+void unlock_analyzer(AnalyzerData *data)
 {
 	WaitForSingleObject(lock_mutex, INFINITE);
-	al->data.lock = FALSE;
+	data->lock = FALSE;
 	ReleaseMutex(lock_mutex);
 }
 
-void inc_pack_count(AnalyzerData *data)
-{
-	WaitForSingleObject(data->mutex, INFINITE);
-	data->pack_count++;
-	ReleaseMutex(data->mutex);
-}
-
-void dec_pack_count(AnalyzerData *data)
-{
-	WaitForSingleObject(data->mutex, INFINITE);
-	data->pack_count--;
-	ReleaseMutex(data->mutex);
-}
-
 const char* package_info = "\
-Analyzer #%d\n\
-Adapter %s\n\
-%s: %s to %s Size: %d\n\
-Data:\n";
+%02d:%02d:%02d. %s: %s to %s Size: %d\n\
+Data: \"";
 
 DWORD WINAPI an_thread(LPVOID ptr)
 {
@@ -230,30 +244,40 @@ DWORD WINAPI an_thread(LPVOID ptr)
 	{
 		if (data->pack_count)
 		{
-			char *adapter_addr, *package_data;
-			// Разбор данных о пакете
-			package_data = data->buffer + data->r_cursor;
-			memcpy(&adapter_addr, package_data, sizeof(char *));
-			package_data += sizeof(char *);
-			IPHeader *package = (IPHeader *)package_data;
-		
-			IN_ADDR src_addr, dest_addr;
-			src_addr.s_addr = package->src;
-			dest_addr.s_addr = package->dest;
-			unsigned short size = (package->length << 8) + (package->length >> 8);
-			
-			WaitForSingleObject(print_mutex, INFINITE);
-			print_msglogf(package_info, data->id, adapter_addr, 
-				get_protocol_name(package->protocol),
-				inet_ntoa(src_addr), inet_ntoa(dest_addr), 
-				size);
-			if (get_msg_log_enabled())
-				for (int i = sizeof(IPHeader); i < size; i++)
-					print_msglogc(package_data[i]);
-			print_msglog("\n\n");	
-			ReleaseMutex(print_mutex);
-
-			dec_pack_count(data);
+			data->read = TRUE;
+			PackageData *pd = data->r_package;
+			// Получение текущего времени
+			time_t tt;
+			struct tm *ti;
+			time(&tt);
+			ti = localtime(&tt);
+			// Заполние данных
+			IN_ADDR in_addr;
+			char src_buff[16];
+			char dest_buff[16];
+			unsigned short size;
+			unsigned short shift = sizeof(IPHeader);
+			size = (pd->header.length << 8) + (pd->header.length >> 8);
+			in_addr.s_addr = pd->header.src;
+			strcpy(src_buff, inet_ntoa(in_addr));
+			in_addr.s_addr = pd->header.dest;
+			strcpy(dest_buff, inet_ntoa(in_addr));
+			// Вывод в файл
+			lock_file();	
+			fprint_f(pd->adapter->fid, package_info,
+				ti->tm_hour, ti->tm_min, ti->tm_sec,
+				get_protocol_name(pd->header.protocol),
+				src_buff, dest_buff, size);
+			fprint_n(pd->adapter->fid, &(pd->data), size - shift);
+			fprint_s(pd->adapter->fid, "\"\n\n");
+			unlock_file();		
+			// Отмечаем, что пакет проверен
+			pd->adapter = NULL; 
+			data->r_package = pd->next;
+			WaitForSingleObject(data->mutex, INFINITE);
+			data->pack_count--;
+			data->read = FALSE;
+			ReleaseMutex(data->mutex);
 		}
 	}
 }
