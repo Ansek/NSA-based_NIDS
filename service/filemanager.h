@@ -38,6 +38,12 @@ void run_filemanager();
 FID open_file(const char *filename);
 
 /**
+@brief Создает новый файл с заданным именем
+@param text - Текст ошибки
+*/
+FILE *create_file(const char* filename);
+
+/**
 @brief Добавляет файл в список
 @param file Ссылка на файл
 @return Идентификатор для доступа к файлу

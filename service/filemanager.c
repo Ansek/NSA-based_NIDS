@@ -19,6 +19,8 @@ short time_sleep;				// Время перерыва между сохранен�
 // Вспомогательные функции
 // Получение файла по идентификатору
 FilesList *get_file(FID id);
+// Создает файл
+FILE *create_file_m(const char* filename, const char* mode);
 // Поток для переодичного сохранения в файлы
 DWORD WINAPI fm_thread(LPVOID ptr);
 
@@ -47,37 +49,14 @@ void run_filemanager()
 
 FID open_file(const char *filename)
 {
-	FILE *file = fopen(filename, "a");
-	// Создание директории по необходимости
-	if (file == NULL)
-	{
-		// Попытка создать недостающую директорию
-		const char *end = filename;	
-		while (*end != '\0')
-		{
-			if (*end == '\\')
-			{
-				// Попытка создать директорию
-				short size = end - filename + 1;
-				char *dir = (char *)malloc(size);
-				strncpy(dir, filename, size);
-				dir[size - 1] = '\0';
-				mkdir(dir);
-				free(dir);
-				// Повторная помытка создания файла				
-				file = fopen(filename, "a");
-				if (file != NULL)
-					break;
-			}
-			end++;
-		}
-	}
-	if (file == NULL)
-	{
-		print_errlogf("Failed to create file \"%s\"", filename);
-		exit(2);
-	};
+	FILE *file = create_file_m(filename, "a");
 	return add_to_flist(file);
+}
+
+FILE *create_file(const char* filename)
+{
+	FILE *file = create_file_m(filename, "w");
+	return file;
 }
 
 FID add_to_flist(FILE *file)
@@ -191,6 +170,41 @@ FilesList *get_file(FID id)
 	while(p != NULL && p->id != id)
 		p = p->next;
 	return p;	
+}
+
+FILE *create_file_m(const char* filename, const char* mode)
+{
+	FILE *file = fopen(filename, mode);
+	// Создание директории по необходимости
+	if (file == NULL)
+	{
+		// Попытка создать недостающую директорию
+		const char *end = filename;	
+		while (*end != '\0')
+		{
+			if (*end == '\\')
+			{
+				// Попытка создать директорию
+				short size = end - filename + 1;
+				char *dir = (char *)malloc(size);
+				strncpy(dir, filename, size);
+				dir[size - 1] = '\0';
+				mkdir(dir);
+				free(dir);
+				// Повторная помытка создания файла				
+				file = fopen(filename, mode);
+				if (file != NULL)
+					break;
+			}
+			end++;
+		}
+	}
+	if (file == NULL)
+	{
+		print_errlogf("Failed to create file \"%s\"", filename);
+		exit(2);
+	};
+	return file;
 }
 
 DWORD WINAPI fm_thread(LPVOID ptr)

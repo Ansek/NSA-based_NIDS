@@ -70,6 +70,21 @@ typedef struct AnalyzerList
 	struct AnalyzerList *next;	// Следующий анализатор
 } AnalyzerList;
 
+// Список промежутков, когда надо сохранять файл детекторов
+typedef struct SavePeriodsList
+{
+	int period;						// Время между записью в файл (минуты)
+	struct SavePeriodsList* next;	// Следующее время ожидания
+} SavePeriodsList;
+
+// Для фиксирования времени обучения
+typedef struct TimeData
+{
+	size_t days;			// Дни
+	unsigned char hours;	// Часы
+	unsigned char minutes;	// Минуты
+} TimeData;
+
 /**
 @brief Запускает процесс проверки пакетов
 */

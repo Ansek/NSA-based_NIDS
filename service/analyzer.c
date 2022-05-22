@@ -9,12 +9,16 @@
 #include "analyzer.h"
 
 AnalyzerList *alist = NULL;			// Ссылка на циклический список анализаторов
+SavePeriodsList* beg_splist = NULL; // Минуты между сохранением детекторов
+SavePeriodsList* end_splist = NULL; 
 unsigned short alist_count;			// Количество анализаторов в списке
 unsigned short max_alist_count;		// Максимальное количество анализаторов
 unsigned short adapter_data_size;	// Размер данных адаптера без буфера
 size_t analyzer_buffer_size;		// Максимальный размер буфера анализатора
 HANDLE list_mutex;					// Мьютекс для работы со списком
 HANDLE lock_mutex;					// Мьютекс для контроля блокировок
+
+const char *db_detectors_dirname = NULL; // Путь к файлам детекторов
 
 // Вспомогательные функции
 // Создает анализатор в новом потоке
@@ -26,8 +30,14 @@ AnalyzerData *get_free_analyzer(size_t length);
 Bool lock_analyzer(AnalyzerData *data);
 // Разблокировка анализатора
 void unlock_analyzer(AnalyzerData *data);
+// Добавляет промежуток в минутах между сохранением детекторов
+void add_save_period(int period);
+// Прибавляет минуты к td
+void add_time(TimeData *td, int minutes);
 // Поток для проверки пакетов
 DWORD WINAPI an_thread(LPVOID ptr);
+// Поток для переодичного сохранения детекторов
+DWORD WINAPI sd_thread(LPVOID ptr);
 
 void run_analyzer()
 {
@@ -46,6 +56,11 @@ void run_analyzer()
 		else if (strcmp(name, "max_packet_in_analyzer") == 0)
 			analyzer_buffer_size = read_setting_i() *
 				(PACKAGE_DATA_SIZE + PACKAGE_BUFFER_SIZE);
+		else if (strcmp(name, "db_detectors_dirname") == 0)
+			db_detectors_dirname = read_setting_s();
+		else if (strcmp(name, "detector_save_periods") == 0)
+			while (is_reading_setting_value())
+				add_save_period(read_setting_i());
 		else
 			print_not_used(name);
 	}
@@ -53,6 +68,11 @@ void run_analyzer()
 	// Создание требуемого количества анализаторов
 	for (int i = 0; i  < min_alist_count; i++)
 		create_analyzer(FALSE);
+	
+	// Создание потока для сохранения детекторов
+	HANDLE hThread = CreateThread(NULL, 0, sd_thread, NULL, 0, NULL);
+	if (hThread == NULL)
+		print_msglog("Thread to save detectors not created!");
 }
 
 void analyze_package(AdapterData *data)
@@ -209,7 +229,6 @@ AnalyzerData *get_free_analyzer(size_t length)
 	return &(al->data);
 }
 
-// Блокировка анализатора
 Bool lock_analyzer(AnalyzerData *data)
 {
 	Bool l = FALSE;
@@ -224,12 +243,53 @@ Bool lock_analyzer(AnalyzerData *data)
 	return l;
 }
 
-// Разблокировка анализатора
 void unlock_analyzer(AnalyzerData *data)
 {
 	WaitForSingleObject(lock_mutex, INFINITE);
 	data->lock = FALSE;
 	ReleaseMutex(lock_mutex);
+}
+
+void add_save_period(int period)
+{
+	// Создание отдельного потока
+	SavePeriodsList *splist;
+	splist = (SavePeriodsList *)malloc(sizeof(SavePeriodsList));
+	splist->period = period;
+	splist->next = NULL;
+	// Добавление его в список
+	if (beg_splist == NULL)
+	{
+		beg_splist = splist;
+		end_splist = splist;
+	}
+	else
+	{
+		end_splist->next = splist;
+		end_splist = splist;
+	}
+}
+
+void add_time(TimeData *td, int minutes)
+{
+	// Получение минут
+	td->minutes += minutes % 60;
+	if (td->minutes > 59)
+	{
+		td->hours++;
+		td->minutes -= 60;
+	}
+	minutes /= 60;
+	// Получение часов
+	td->hours += minutes % 24;
+	if (td->hours > 23)
+	{
+		td->days++;
+		td->hours -= 24;
+	}
+	minutes /= 24;
+	// Получение дней
+	td->days += minutes;
 }
 
 const char* package_info = "\
@@ -279,5 +339,34 @@ DWORD WINAPI an_thread(LPVOID ptr)
 			data->read = FALSE;
 			ReleaseMutex(data->mutex);
 		}
+	}
+}
+
+DWORD WINAPI sd_thread(LPVOID ptr)
+{
+	TimeData td;
+	td.days = 0;
+	td.hours = 0;
+	td.minutes = 0;
+	while (beg_splist != NULL)
+	{
+		// Засыпание на определенное количество минут
+		Sleep(beg_splist->period * 60000); // До 24 дней 
+		add_time(&td, beg_splist->period); // Увеличение на минуту
+		// Формирование имени файлов логов
+		if (db_detectors_dirname == NULL)
+			db_detectors_dirname = "DB//";
+		char filename[FILE_NAME_SIZE];
+		sprintf(filename, "%sdetectors [%d d. %d h. %d m.].db", 
+			db_detectors_dirname, td.days, td.hours, td.minutes);
+		// Сохранение файла
+		FILE *f = create_file(filename);
+		fprintf(f, "%d m.", beg_splist->period);
+		fclose(f);
+		// Переход к следующему элементу и освобождение памяти
+		SavePeriodsList* temp = beg_splist;
+		beg_splist = beg_splist->next;
+		free(temp);
+		temp = NULL;
 	}
 }
