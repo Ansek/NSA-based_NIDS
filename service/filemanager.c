@@ -101,6 +101,19 @@ void fprint_f(FID id, const char *text, ...)
 	va_end(ap);
 }
 
+void fprint_package(FID id, const char *data,  PackageInfo *info,
+	const char *text, ...)
+{
+	lock_file();
+	FilesList *flist = get_file(id);
+	va_list ap;
+	va_start(ap, text);
+	vfprintf(flist->file, text, ap);
+	va_end(ap);
+	fwrite(data, info->size - info->shift, 1, flist->file);
+	fputs("\"\n\n", flist->file);
+	unlock_file();
+}
 
 void print_msglog(const char* text)
 {

@@ -22,15 +22,48 @@ typedef struct IPHeader
 {
 	unsigned char	ver_len;	// Версия и длина заголовка
 	unsigned char	tos;		// Тип сервиса
-	unsigned short	length;		// Длина всего пакета
+	unsigned short	length;		// Длина всего пакета (поменять байты местами)
 	unsigned short	id;			// Идентификатор пакета
 	unsigned short	offset;		// Флаги и смещения
 	unsigned char	ttl;		// Время жизни пакета
 	unsigned char	protocol;	// Используемый протокол
 	unsigned short	xsum;		// Контрольная сумма
 	unsigned long	src;		// IP-адрес отправителя
-	unsigned long	dest;		// IP-адрес получателя
+	unsigned long	dst;		// IP-адрес получателя
 } IPHeader;
+
+// Заголовок TCP протокола
+typedef struct TCPHeader
+{
+	unsigned short	src_port;   // Порт отправителя
+	unsigned short	dst_port;   // Порт получателя
+	unsigned long	seq_num;    // Порядковый номер
+	unsigned long	ask_num;    // Номер подтрвеждения
+	unsigned char	length;     // Длина заголовка (первые 4 бита * 4 байта)
+	unsigned char	flags;      // Флаги
+	unsigned short	win_size;   // Размер окна
+	unsigned short	xsum;       // Контрольная сумма
+	unsigned short	urg;	    // Указатель срочности
+} TCPHeader;
+
+// Заголовок UDP протокола
+typedef struct UDPHeader
+{
+	unsigned short	src_port;   // Порт отправителя
+	unsigned short	dst_port;   // Порт получателя
+	unsigned short	length;     // Длина дейтаграммы
+	unsigned short	xsum;       // Контрольная сумма
+} UDPHeader;
+
+// Заголовок ICMP протокола
+typedef struct ICMPHeader
+{
+	unsigned char	type;       // 0 - ответ, 8 - запрос
+	unsigned char	code;       // Код ошибки
+	unsigned short	xsum;       // Контрольная сумма
+	unsigned short	field1;     // Поля зависят от значений 
+	unsigned short	field2;     // type и code
+} ICMPHeader;
 
 // Данные для адаптера
 typedef struct AdapterData
@@ -46,7 +79,6 @@ typedef struct PackageData
 	AdapterData *adapter;		// Ссылка на информацию об адаптере
 	struct PackageData *next; 	// Следующий адрес в буфере
 	IPHeader header;			// Заголовок пакета
-	char data;					// Начало данных пакета
 } PackageData;
 
 // Данные для анализатора

@@ -20,11 +20,38 @@ HANDLE lock_mutex;					// Мьютекс для контроля блокиро�
 
 const char *db_detectors_dirname = NULL; // Путь к файлам детекторов
 
+// Шаблон для вывода информации о TCP
+const char* tcp_log_format = "\
+%s. TCP(%d): %s:%d to %s:%d Size: %d\n\
+Data: \"";
+// Шаблон для вывода информации о UDP
+const char* udp_log_format = "\
+%s. UDP: %s:%d to %s:%d Size: %d\n\
+Data: \"";
+// Шаблон для вывода информации о ICMP
+const char* icmp_log_format = "\
+%s. ICMP(%d, %d): %s to %s Size: %d\n\
+Data: \"";
+// Шаблон для вывода информации о пакете по умолчанию
+const char* ip_log_format = "\
+%s. %s: %s to %s Size: %d\n\
+Data: \"";
+
 // Вспомогательные функции
 // Создает анализатор в новом потоке
 AnalyzerList *create_analyzer(Bool unlock);
 // Получает свободный анализатор
 AnalyzerData *get_free_analyzer(size_t length);
+// Анализирует пакет протокола TCP
+void analyze_tcp(PackageData *pd);
+// Анализирует пакет протокола UDP
+void analyze_udp(PackageData *pd);
+// Анализирует пакет протокола ICMP
+void analyze_icmp(PackageData *pd);
+// Анализирует пакет без связи с протоколом
+void analyze_ip(PackageData *pd);
+// Разбор нужных элементов IP заголовка
+PackageInfo get_ip_info(PackageData *pd);
 // Блокировка анализатора
 // @return TRUE - если заблокирован данным потоком
 Bool lock_analyzer(AnalyzerData *data);
@@ -229,6 +256,89 @@ AnalyzerData *get_free_analyzer(size_t length)
 	return &(al->data);
 }
 
+void analyze_tcp(PackageData *pd)
+{
+	PackageInfo info = get_ip_info(pd);
+	char *data = (char *)&(pd->header);
+	// Получаем заголовок протокола
+	TCPHeader *tcp = (TCPHeader *)(data + info.shift);
+	info.shift += (tcp->length & 0xF0) >> 2;
+	// Переход к данным
+	data += info.shift;
+	// Вывод в файл
+	fprint_package(pd->adapter->fid, data, &info, tcp_log_format,
+		info.time_buff, tcp->flags,
+		info.src_buff, ntohs(tcp->src_port),
+		info.dst_buff, ntohs(tcp->dst_port),
+		info.size);
+}
+
+void analyze_udp(PackageData *pd)
+{
+	PackageInfo info = get_ip_info(pd);
+	char *data = (char *)&(pd->header);
+	// Получаем заголовок протокола
+	UDPHeader *udp = (UDPHeader *)(data + info.shift);
+	info.shift += sizeof(UDPHeader);
+	// Переход к данным
+	data += info.shift;
+	// Вывод в файл
+	fprint_package(pd->adapter->fid, data, &info, udp_log_format,
+		info.time_buff,
+		info.src_buff, ntohs(udp->src_port),
+		info.dst_buff, ntohs(udp->dst_port),
+		info.size);
+}
+
+void analyze_icmp(PackageData *pd)
+{
+	PackageInfo info = get_ip_info(pd);
+	char *data = (char *)&(pd->header);
+	// Получаем заголовок протокола
+	ICMPHeader *icmp = (ICMPHeader *)(data + info.shift);
+	info.shift += sizeof(ICMPHeader);
+	// Переход к данным
+	data += info.shift;
+	// Вывод в файл
+	fprint_package(pd->adapter->fid, data, &info, icmp_log_format,
+		info.time_buff, icmp->type, icmp->code,
+		info.src_buff, info.dst_buff, info.size);
+}
+
+void analyze_ip(PackageData *pd)
+{
+	PackageInfo info = get_ip_info(pd);
+	char *data = (char *)(&pd->header);
+	data += info.shift;
+	// Вывод в файл
+	fprint_package(pd->adapter->fid, data, &info, icmp_log_format,
+		info.time_buff, get_protocol_name(pd->header.protocol),
+		info.src_buff, info.dst_buff, info.size);
+}
+
+PackageInfo get_ip_info(PackageData *pd)
+{
+	PackageInfo info;
+	// Получение текущего времени
+	time_t tt;
+	struct tm *ti;
+	time(&tt);
+	ti = localtime(&tt);
+	sprintf(info.time_buff, "%02d:%02d:%02d", 
+		ti->tm_hour, ti->tm_min, ti->tm_sec);
+	// Получение адресов
+	IN_ADDR in_addr;
+	in_addr.s_addr = pd->header.src;
+	strcpy(info.src_buff, inet_ntoa(in_addr));
+	in_addr.s_addr = pd->header.dst;
+	strcpy(info.dst_buff, inet_ntoa(in_addr));
+	// Определение размера
+	info.size = ntohs(pd->header.length);
+	// Определение смещения
+	info.shift = sizeof(IPHeader);
+	return info;
+}
+
 Bool lock_analyzer(AnalyzerData *data)
 {
 	Bool l = FALSE;
@@ -292,10 +402,6 @@ void add_time(TimeData *td, int minutes)
 	td->days += minutes;
 }
 
-const char* package_info = "\
-%02d:%02d:%02d. %s: %s to %s Size: %d\n\
-Data: \"";
-
 DWORD WINAPI an_thread(LPVOID ptr)
 {
 	AnalyzerData* data = (AnalyzerData *)ptr;	
@@ -306,31 +412,15 @@ DWORD WINAPI an_thread(LPVOID ptr)
 		{
 			data->read = TRUE;
 			PackageData *pd = data->r_package;
-			// Получение текущего времени
-			time_t tt;
-			struct tm *ti;
-			time(&tt);
-			ti = localtime(&tt);
-			// Заполние данных
-			IN_ADDR in_addr;
-			char src_buff[16];
-			char dest_buff[16];
-			unsigned short size;
-			unsigned short shift = sizeof(IPHeader);
-			size = (pd->header.length << 8) + (pd->header.length >> 8);
-			in_addr.s_addr = pd->header.src;
-			strcpy(src_buff, inet_ntoa(in_addr));
-			in_addr.s_addr = pd->header.dest;
-			strcpy(dest_buff, inet_ntoa(in_addr));
-			// Вывод в файл
-			lock_file();	
-			fprint_f(pd->adapter->fid, package_info,
-				ti->tm_hour, ti->tm_min, ti->tm_sec,
-				get_protocol_name(pd->header.protocol),
-				src_buff, dest_buff, size);
-			fprint_n(pd->adapter->fid, &(pd->data), size - shift);
-			fprint_s(pd->adapter->fid, "\"\n\n");
-			unlock_file();		
+			// Определение типа протокола для уточнения анализа
+			if (pd->header.protocol == IPPROTO_TCP)
+				analyze_tcp(pd);
+			else if (pd->header.protocol == IPPROTO_UDP)
+				analyze_udp(pd);
+			else if (pd->header.protocol == IPPROTO_ICMP)
+				analyze_icmp(pd);
+			else
+				analyze_ip(pd);
 			// Отмечаем, что пакет проверен
 			pd->adapter = NULL; 
 			data->r_package = pd->next;

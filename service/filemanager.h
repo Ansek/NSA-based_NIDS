@@ -25,6 +25,16 @@ typedef struct FilesList
 	struct FilesList *next;		// Ссылка на следующий файл
 } FilesList;
 
+// Хранение информации о пакете для вывода в лог
+typedef struct PackageInfo
+{
+	char time_buff[9];          // Время начала анализа
+	char src_buff[16];          // Адрес отправителя
+	char dst_buff[16];          // Адрес получателя
+	unsigned short size;        // Размер пакета
+	unsigned short shift;       // Смещение до данных
+} PackageInfo;
+
 /**
 @brief Запускает менеджер по сохранению файлов
 */
@@ -71,6 +81,15 @@ void fprint_n(FID id, const char *text, size_t size);
 @param text Текст для записи
 */
 void fprint_f(FID id, const char* text, ...);
+
+/**
+@brief Записывает информацию о пакете в файл
+@param id Идентификатор для доступа к файлу
+@param data Начало данных пакета
+@param pi Информация о пакете
+@param text Текст для записи
+*/
+void fprint_package(FID id, const char *data, PackageInfo *info, const char *text, ...);
 
 /**
 @brief Выводит текст сообщения пользователю
