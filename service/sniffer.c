@@ -41,18 +41,24 @@ void run_sniffer()
 		else
 			print_not_used(name);
 	}
+	
+	// Настройка папки логов
+	if (adapter_log_dirname == NULL)
+		adapter_log_dirname = "LOG//";
+	// Добавление файла лога статистики
+	char filename[FILE_NAME_SIZE];
+	sprintf(filename, "%sstatistics.log", adapter_log_dirname);
+	FID fid = open_file(filename);
+	set_fid_stat(fid);
 }
 
 // Подключение к адаптеру для прослушивания
 void connection_to_adapter(char *addr)
 {
 	// Формирование имени файлов логов
-	if (adapter_log_dirname == NULL)
-		adapter_log_dirname = "LOG//";
 	char filename[FILE_NAME_SIZE];
-	strcpy(filename, adapter_log_dirname);
-	strcat(filename, addr);
-	strcat(filename, ".log");
+	sprintf(filename, "%s%s.log", adapter_log_dirname, addr);
+	FID fid = open_file(filename);
 	// Создание отдельного потока
 	AdapterList *alist = (AdapterList *)malloc(sizeof(AdapterList));
 	alist->data.addr = addr;

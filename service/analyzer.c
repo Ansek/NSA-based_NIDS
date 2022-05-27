@@ -11,18 +11,24 @@
 AnalyzerList *alist = NULL;			// Ссылка на циклический список анализаторов
 SavePeriodsList* beg_splist = NULL; // Минуты между сохранением детекторов
 SavePeriodsList* end_splist = NULL; 
+NBStatisticsList* beg_nbslist = NULL; // Список статистик поведения сети
+NBStatisticsList* end_nbslist = NULL;
 unsigned short alist_count;			// Количество анализаторов в списке
 unsigned short max_alist_count;		// Максимальное количество анализаторов
 unsigned short adapter_data_size;	// Размер данных адаптера без буфера
+unsigned short stat_col_period;		// Период сбора статистики в секундах
 size_t analyzer_buffer_size;		// Максимальный размер буфера анализатора
+FID fid_stat;                       // Хранит идентификатор на файл статистики
+Bool is_stats_changed = FALSE;		// Были ли изменения в статистике
 HANDLE list_mutex;					// Мьютекс для работы со списком
 HANDLE lock_mutex;					// Мьютекс для контроля блокировок
+HANDLE stat_mutex;                  // Мьютекс для работы со статистикой
 
 const char *db_detectors_dirname = NULL; // Путь к файлам детекторов
 
 // Шаблон для вывода информации о TCP
 const char* tcp_log_format = "\
-%s. TCP(%d): %s:%d to %s:%d Size: %d\n\
+%s. TCP(%s): %s:%d to %s:%d Size: %d\n\
 Data: \"";
 // Шаблон для вывода информации о UDP
 const char* udp_log_format = "\
@@ -36,6 +42,12 @@ Data: \"";
 const char* ip_log_format = "\
 %s. %s: %s to %s Size: %d\n\
 Data: \"";
+// Шаблон для вывода информации о статистике
+const char* stat_log_format = "\
+%s\n\
+tc=%d;\t\tuc=%d;\t\tic=%d;\t\tipc=%d;\n\
+sc=%d;\t\tac=%d;\t\tfc=%d;\t\trc=%d;\n\
+atc=%d;\t\tutc=%d;\t\tauc=%d;\t\tuuc=%d;\n\n";
 
 // Вспомогательные функции
 // Создает анализатор в новом потоке
@@ -61,10 +73,16 @@ void unlock_analyzer(AnalyzerData *data);
 void add_save_period(int period);
 // Прибавляет минуты к td
 void add_time(TimeData *td, int minutes);
+// Записывает в буфер текущее время
+void get_localtime(char* buff);
+// Создает новую статистику в списке
+void create_statistics();
 // Поток для проверки пакетов
 DWORD WINAPI an_thread(LPVOID ptr);
 // Поток для переодичного сохранения детекторов
 DWORD WINAPI sd_thread(LPVOID ptr);
+// Поток для фиксации данных статистики
+DWORD WINAPI nbs_thread(LPVOID ptr);
 
 void run_analyzer()
 {
@@ -88,18 +106,31 @@ void run_analyzer()
 		else if (strcmp(name, "detector_save_periods") == 0)
 			while (is_reading_setting_value())
 				add_save_period(read_setting_i());
+		else if (strcmp(name, "stat_col_period") == 0)
+			stat_col_period = read_setting_i();
 		else
 			print_not_used(name);
+	}
+	
+	// Создание потока для сохранения детекторов
+	HANDLE hThread = CreateThread(NULL, 0, sd_thread, NULL, 0, NULL);
+	if (hThread == NULL)
+	{
+		print_msglog("Thread to save detectors not created!");
+		exit(6);
+	}
+	
+	// Создание потока для сохранения статистики
+	hThread = CreateThread(NULL, 0, nbs_thread, NULL, 0, NULL);
+	if (hThread == NULL)
+	{
+		print_msglog("Thread to save statistics not created!");
+		exit(7);
 	}
 	
 	// Создание требуемого количества анализаторов
 	for (int i = 0; i  < min_alist_count; i++)
 		create_analyzer(FALSE);
-	
-	// Создание потока для сохранения детекторов
-	HANDLE hThread = CreateThread(NULL, 0, sd_thread, NULL, 0, NULL);
-	if (hThread == NULL)
-		print_msglog("Thread to save detectors not created!");
 }
 
 void analyze_package(AdapterData *data)
@@ -117,6 +148,11 @@ void analyze_package(AdapterData *data)
 	adata->pack_count++;
 	ReleaseMutex(adata->mutex);
 	unlock_analyzer(adata);
+}
+
+void set_fid_stat(FID fid)
+{
+	fid_stat = fid;
 }
 
 AnalyzerList *create_analyzer(Bool lock)
@@ -263,11 +299,22 @@ void analyze_tcp(PackageData *pd)
 	// Получаем заголовок протокола
 	TCPHeader *tcp = (TCPHeader *)(data + info.shift);
 	info.shift += (tcp->length & 0xF0) >> 2;
+	// Сбор статистики
+	WaitForSingleObject(stat_mutex, INFINITE);
+	NBStatistics *stat = &end_nbslist->stat;
+	stat->tcp_count++;
+	is_stats_changed = TRUE;
+	ReleaseMutex(stat_mutex);	
+	// Определяем флаги
+	char flags[7] = "UAPRSF";
+	for (int i = 0; i < 6; i++)
+		if ((tcp->flags & 0x20 >> i) == 0)
+			flags[i] = '_';
 	// Переход к данным
 	data += info.shift;
 	// Вывод в файл
 	fprint_package(pd->adapter->fid, data, &info, tcp_log_format,
-		info.time_buff, tcp->flags,
+		info.time_buff, flags,
 		info.src_buff, ntohs(tcp->src_port),
 		info.dst_buff, ntohs(tcp->dst_port),
 		info.size);
@@ -280,6 +327,12 @@ void analyze_udp(PackageData *pd)
 	// Получаем заголовок протокола
 	UDPHeader *udp = (UDPHeader *)(data + info.shift);
 	info.shift += sizeof(UDPHeader);
+	// Сбор статистики
+	WaitForSingleObject(stat_mutex, INFINITE);
+	NBStatistics *stat = &end_nbslist->stat;
+	stat->udp_count++;
+	is_stats_changed = TRUE;
+	ReleaseMutex(stat_mutex);	
 	// Переход к данным
 	data += info.shift;
 	// Вывод в файл
@@ -297,6 +350,12 @@ void analyze_icmp(PackageData *pd)
 	// Получаем заголовок протокола
 	ICMPHeader *icmp = (ICMPHeader *)(data + info.shift);
 	info.shift += sizeof(ICMPHeader);
+	// Сбор статистики
+	WaitForSingleObject(stat_mutex, INFINITE);
+	NBStatistics *stat = &end_nbslist->stat;
+	stat->icmp_count++;
+	is_stats_changed = TRUE;
+	ReleaseMutex(stat_mutex);	
 	// Переход к данным
 	data += info.shift;
 	// Вывод в файл
@@ -310,6 +369,12 @@ void analyze_ip(PackageData *pd)
 	PackageInfo info = get_ip_info(pd);
 	char *data = (char *)(&pd->header);
 	data += info.shift;
+	// Сбор статистики
+	WaitForSingleObject(stat_mutex, INFINITE);
+	NBStatistics *stat = &end_nbslist->stat;
+	stat->ip_count++;
+	is_stats_changed = TRUE;
+	ReleaseMutex(stat_mutex);
 	// Вывод в файл
 	fprint_package(pd->adapter->fid, data, &info, icmp_log_format,
 		info.time_buff, get_protocol_name(pd->header.protocol),
@@ -320,12 +385,7 @@ PackageInfo get_ip_info(PackageData *pd)
 {
 	PackageInfo info;
 	// Получение текущего времени
-	time_t tt;
-	struct tm *ti;
-	time(&tt);
-	ti = localtime(&tt);
-	sprintf(info.time_buff, "%02d:%02d:%02d", 
-		ti->tm_hour, ti->tm_min, ti->tm_sec);
+	get_localtime(info.time_buff);
 	// Получение адресов
 	IN_ADDR in_addr;
 	in_addr.s_addr = pd->header.src;
@@ -362,7 +422,6 @@ void unlock_analyzer(AnalyzerData *data)
 
 void add_save_period(int period)
 {
-	// Создание отдельного потока
 	SavePeriodsList *splist;
 	splist = (SavePeriodsList *)malloc(sizeof(SavePeriodsList));
 	splist->period = period;
@@ -400,6 +459,39 @@ void add_time(TimeData *td, int minutes)
 	minutes /= 24;
 	// Получение дней
 	td->days += minutes;
+}
+
+void get_localtime(char* buff)
+{
+	// Получение текущего времени
+	time_t tt;
+	struct tm *ti;
+	time(&tt);
+	ti = localtime(&tt);
+	// Запись в буффер
+	sprintf(buff, "%02d:%02d:%02d", ti->tm_hour, ti->tm_min, ti->tm_sec);
+}
+
+void create_statistics()
+{
+	NBStatisticsList *nbslist;
+	nbslist = (NBStatisticsList *)malloc(sizeof(NBStatisticsList));
+	ZeroMemory(&nbslist->stat, sizeof(NBStatistics));
+	nbslist->next = NULL;
+	// Добавление его в список
+	WaitForSingleObject(stat_mutex, INFINITE);
+	if (beg_nbslist == NULL)
+	{
+		beg_nbslist = nbslist;
+		end_nbslist = nbslist;
+	}
+	else
+	{
+		end_nbslist->next = nbslist;
+		end_nbslist = nbslist;
+	}
+	is_stats_changed = FALSE;
+	ReleaseMutex(stat_mutex);	
 }
 
 DWORD WINAPI an_thread(LPVOID ptr)
@@ -458,5 +550,29 @@ DWORD WINAPI sd_thread(LPVOID ptr)
 		beg_splist = beg_splist->next;
 		free(temp);
 		temp = NULL;
+	}
+}
+
+DWORD WINAPI nbs_thread(LPVOID ptr)
+{
+	while (TRUE)
+	{
+		// Запись текущей статистики в лог
+		if (is_stats_changed)
+		{
+			// Получение времени
+			char time_buff[9];
+			get_localtime(time_buff); 
+			// Запись статистики
+			NBStatistics *stat = &end_nbslist->stat;
+			fprint_f(fid_stat, stat_log_format, time_buff,
+				stat->tcp_count, stat->udp_count, stat->icmp_count, stat->ip_count,
+				stat->syn_count, stat->ask_sa_count, stat->fin_count, stat->rst_count,
+				stat->al_tcp_port_count, stat->un_tcp_port_count,
+				stat->al_udp_port_count, stat->un_udp_port_count);
+		}
+		// Добавление новой статистики, для сохранения предыдущей
+		create_statistics();
+		Sleep(stat_col_period * 1000);
 	}
 }
