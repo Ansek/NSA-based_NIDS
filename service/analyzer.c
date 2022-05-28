@@ -13,10 +13,16 @@ SavePeriodsList* beg_splist = NULL; // Минуты между сохранен�
 SavePeriodsList* end_splist = NULL; 
 NBStatisticsList* beg_nbslist = NULL; // Список статистик поведения сети
 NBStatisticsList* end_nbslist = NULL;
+SynTCPList* beg_synlist = NULL; 	// Список полуоткрытых соединений 
+SynTCPList* end_synlist = NULL;
 unsigned short alist_count;			// Количество анализаторов в списке
 unsigned short max_alist_count;		// Максимальное количество анализаторов
 unsigned short adapter_data_size;	// Размер данных адаптера без буфера
 unsigned short stat_col_period;		// Период сбора статистики в секундах
+unsigned short *allowed_tcp_ports = NULL;	// Список разрешенных TCP портов
+unsigned short *allowed_udp_ports = NULL;	// Список разрешенных UDP портов
+unsigned short allowed_tcp_count = 0;	// Количество разрешенных TCP портов
+unsigned short allowed_udp_count = 0;	// Количество разрешенных UDP портов
 size_t analyzer_buffer_size;		// Максимальный размер буфера анализатора
 FID fid_stat;                       // Хранит идентификатор на файл статистики
 Bool is_stats_changed = FALSE;		// Были ли изменения в статистике
@@ -77,6 +83,15 @@ void add_time(TimeData *td, int minutes);
 void get_localtime(char* buff);
 // Создает новую статистику в списке
 void create_statistics();
+// Добавляет адрес в список полуоткрытых соединения
+void add_syn_tcp_list(unsigned long src);
+// Удаляет адрес из списка полуоткрытых соединения
+// @return TRUE - был ли такой элемент в списке
+Bool remove_syn_tcp_list(unsigned long src);
+// Проверяет, есть ли порт в списке TCP
+Bool check_tcp_port(unsigned short nport);
+// Проверяет, есть ли порт в списке UDP
+Bool check_udp_port(unsigned short nport);
 // Поток для проверки пакетов
 DWORD WINAPI an_thread(LPVOID ptr);
 // Поток для переодичного сохранения детекторов
@@ -303,6 +318,32 @@ void analyze_tcp(PackageData *pd)
 	WaitForSingleObject(stat_mutex, INFINITE);
 	NBStatistics *stat = &end_nbslist->stat;
 	stat->tcp_count++;
+	// флаги
+	if (tcp->flags == SYN_FTCP && stat->syn_count < 65535)
+	{
+		stat->syn_count++;
+		add_syn_tcp_list(pd->header.src);
+	}
+	else if (tcp->flags == ACK_FTCP && stat->ask_sa_count < 65535)
+	{
+		if (remove_syn_tcp_list(pd->header.src))
+			stat->ask_sa_count++;
+	}
+	else if (tcp->flags == FIN_FTCP && stat->fin_count < 65535)
+		stat->fin_count++;
+	else if (tcp->flags == RST_FTCP && stat->rst_count < 65535)
+		stat->rst_count++;
+	// порты
+	if (check_tcp_port(tcp->dst_port))
+	{
+		if (stat->al_tcp_port_count < 65535)
+			stat->al_tcp_port_count++;
+	}
+	else
+	{
+		if (stat->un_tcp_port_count < 65535)
+			stat->un_tcp_port_count++;
+	}	
 	is_stats_changed = TRUE;
 	ReleaseMutex(stat_mutex);	
 	// Определяем флаги
@@ -331,6 +372,17 @@ void analyze_udp(PackageData *pd)
 	WaitForSingleObject(stat_mutex, INFINITE);
 	NBStatistics *stat = &end_nbslist->stat;
 	stat->udp_count++;
+	// порты
+	if (check_udp_port(udp->dst_port))
+	{
+		if (stat->al_udp_port_count < 65535)
+			stat->al_udp_port_count++;
+	}
+	else
+	{
+		if (stat->un_udp_port_count < 65535)
+			stat->un_udp_port_count++;
+	}	
 	is_stats_changed = TRUE;
 	ReleaseMutex(stat_mutex);	
 	// Переход к данным
@@ -492,6 +544,110 @@ void create_statistics()
 	}
 	is_stats_changed = FALSE;
 	ReleaseMutex(stat_mutex);	
+}
+
+void add_syn_tcp_list(unsigned long src)
+{
+	SynTCPList *p = beg_synlist;
+	// Попытка найти в списке
+	while (p != NULL)
+		if (p->src == src)
+		{
+			if (p->count < 65535)
+				p->count++;
+			break;
+		}			
+		else
+			p = p->next;
+
+	if (p == NULL)
+	{
+		p = (SynTCPList *)malloc(sizeof(SynTCPList));
+		p->src = src;
+		p->count = 1;
+		p->next = NULL;
+		// Добавление его в список
+		if (beg_synlist == NULL)
+		{
+			beg_synlist = p;
+			end_synlist = p;
+		}
+		else
+		{
+			end_synlist->next = p;
+			end_synlist = p;
+		}
+	}
+}
+
+Bool remove_syn_tcp_list(unsigned long src)
+{
+	Bool res = FALSE;
+	SynTCPList *p = beg_synlist;
+	if (p != NULL)
+	{
+		SynTCPList *pred = NULL; 
+		// Поиск нужного адреса
+		while (p != NULL && p->src != src)
+		{
+			pred = p;
+			p = p->next;
+		}
+		if (p != NULL && p->count > 0)
+		{
+			p->count--;
+			res = TRUE;
+			if (p->count == 0)
+			{
+				if (pred == NULL)
+					beg_synlist = beg_synlist->next;
+				else
+					pred->next = p->next;
+				free(p);
+				p = NULL;
+			}
+		}
+	}
+}
+
+void add_tcp_port(unsigned short hport)
+{
+	allowed_tcp_count++;
+	allowed_tcp_ports = realloc(allowed_tcp_ports, 
+		allowed_tcp_count * sizeof(short));
+	allowed_tcp_ports[allowed_tcp_count - 1] = htons(hport);
+}
+
+Bool check_tcp_port(unsigned short nport)
+{
+	Bool res = FALSE;
+	for (int i = 0; i < allowed_tcp_count; i++)
+		if (allowed_tcp_ports[i] == nport)
+		{
+			res = TRUE;
+			break;
+		}
+	return res;
+}
+
+void add_udp_port(unsigned short hport)
+{
+	allowed_udp_count++;
+	allowed_udp_ports = realloc(allowed_udp_ports, 
+		allowed_udp_count * sizeof(short));
+	allowed_udp_ports[allowed_udp_count - 1] = htons(hport);
+}
+
+Bool check_udp_port(unsigned short nport)
+{
+	Bool res = FALSE;
+	for (int i = 0; i < allowed_udp_count; i++)
+		if (allowed_udp_ports[i] == nport)
+		{
+			res = TRUE;
+			break;
+		}
+	return res;
 }
 
 DWORD WINAPI an_thread(LPVOID ptr)

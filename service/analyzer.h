@@ -17,6 +17,13 @@
 #define PACKAGE_DATA_SIZE sizeof(void *) * 2  // Размер PackageData без буфера 
 #define PACKAGE_BUFFER_SIZE            65535  // Размер буфера пакета
 #define PARAM_NBSTATISTICS_COUNT 12 // Количество параметров статистики
+#define NUL_FTCP 0x00   // Нет флагов
+#define FIN_FTCP 0x01  // Завершение соединение
+#define SYN_FTCP 0x02  // Запрос соединения
+#define RST_FTCP 0x04  // Отказ в соединении
+#define PSH_FTCP 0x08  // Срочная передача пакета
+#define ACK_FTCP 0x10   // Есть номер подтрвеждения
+#define URG_FTCP 0x20   // Есть указатель важности
 
 // Заголовок IP-пакета
 typedef struct IPHeader
@@ -89,6 +96,14 @@ typedef struct NBStatisticsList
 	NBStatistics stat;                 // Статистика за данный период
 	struct NBStatisticsList *next;     // Следующий статистика
 } NBStatisticsList;
+
+// Список полуоткрытых соединий
+typedef struct SynTCPList
+{
+	unsigned long  src;                 // Адрес отправителя
+	unsigned short count;				// Количество для данного адреса
+	struct SynTCPList *next;     		// Следующее соединение
+} SynTCPList;
 
 // Данные для адаптера
 typedef struct AdapterData
@@ -165,5 +180,18 @@ char *get_protocol_name(const unsigned char protocol);
 @param fid Идентификатор на лог статистики
 */
 void set_fid_stat(FID fid);
+
+/**
+@brief Добавляет порт в список TCP
+@param hport Порт в формате хоста
+*/
+void add_tcp_port(unsigned short hport);
+
+// 
+/**
+@brief Добавляет порт в список UDP
+@param hport Порт в формате хоста
+*/
+void add_udp_port(unsigned short hport);
 
 #endif

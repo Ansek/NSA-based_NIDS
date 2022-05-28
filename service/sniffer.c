@@ -26,9 +26,6 @@ void run_sniffer()
 	if (WSAStartup(MAKEWORD(2, 2), &wsadata) != NO_ERROR)
 		print_msglog("WinSock initialization failed!\n");
 	
-	// Инициализация анализаторов
-	run_analyzer();
-	
 	// Получение параметров
 	while (is_reading_settings_section("Sniffer"))
 	{
@@ -38,6 +35,12 @@ void run_sniffer()
 				connection_to_adapter(read_setting_s());
 		else if (strcmp(name, "adapter_log_dirname") == 0)
 			adapter_log_dirname = read_setting_s();
+		else if (strcmp(name, "allowed_tcp_ports") == 0)
+			while (is_reading_setting_value())
+				add_tcp_port(read_setting_i());
+		else if (strcmp(name, "allowed_udp_ports") == 0)
+			while (is_reading_setting_value())
+				add_udp_port(read_setting_i());
 		else
 			print_not_used(name);
 	}
@@ -50,6 +53,9 @@ void run_sniffer()
 	sprintf(filename, "%sstatistics.log", adapter_log_dirname);
 	FID fid = open_file(filename);
 	set_fid_stat(fid);
+	
+	// Инициализация анализаторов
+	run_analyzer();
 }
 
 // Подключение к адаптеру для прослушивания
