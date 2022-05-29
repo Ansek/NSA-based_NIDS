@@ -8,11 +8,12 @@
 
 #include "analyzer.h"
 
+NBStats *stats = NULL;         // Для сбора статитики поведения сети
+
 AnalyzerList *alist = NULL;			// Ссылка на циклический список анализаторов
 SavePeriodsList* beg_splist = NULL; // Минуты между сохранением детекторов
 SavePeriodsList* end_splist = NULL; 
-NBStatisticsList* beg_nbslist = NULL; // Список статистик поведения сети
-NBStatisticsList* end_nbslist = NULL;
+
 SynTCPList* beg_synlist = NULL; 	// Список полуоткрытых соединений 
 SynTCPList* end_synlist = NULL;
 unsigned short alist_count;			// Количество анализаторов в списке
@@ -81,8 +82,6 @@ void add_save_period(int period);
 void add_time(TimeData *td, int minutes);
 // Записывает в буфер текущее время
 void get_localtime(char* buff);
-// Создает новую статистику в списке
-void create_statistics();
 // Добавляет адрес в список полуоткрытых соединения
 void add_syn_tcp_list(unsigned long src);
 // Удаляет адрес из списка полуоткрытых соединения
@@ -126,6 +125,10 @@ void run_analyzer()
 		else
 			print_not_used(name);
 	}
+	
+	// Инициализация параметров алгоритм отрицательного отбора
+	init_algorithm();
+	stats = get_statistics();
 	
 	// Создание потока для сохранения детекторов
 	HANDLE hThread = CreateThread(NULL, 0, sd_thread, NULL, 0, NULL);
@@ -316,33 +319,32 @@ void analyze_tcp(PackageData *pd)
 	info.shift += (tcp->length & 0xF0) >> 2;
 	// Сбор статистики
 	WaitForSingleObject(stat_mutex, INFINITE);
-	NBStatistics *stat = &end_nbslist->stat;
-	stat->tcp_count++;
+	stats->tcp_count++;
 	// флаги
-	if (tcp->flags == SYN_FTCP && stat->syn_count < 65535)
+	if (tcp->flags == SYN_FTCP && stats->syn_count < 65535)
 	{
-		stat->syn_count++;
+		stats->syn_count++;
 		add_syn_tcp_list(pd->header.src);
 	}
-	else if (tcp->flags == ACK_FTCP && stat->ask_sa_count < 65535)
+	else if (tcp->flags == ACK_FTCP && stats->ask_sa_count < 65535)
 	{
 		if (remove_syn_tcp_list(pd->header.src))
-			stat->ask_sa_count++;
+			stats->ask_sa_count++;
 	}
-	else if (tcp->flags == FIN_FTCP && stat->fin_count < 65535)
-		stat->fin_count++;
-	else if (tcp->flags == RST_FTCP && stat->rst_count < 65535)
-		stat->rst_count++;
+	else if (tcp->flags == FIN_FTCP && stats->fin_count < 65535)
+		stats->fin_count++;
+	else if (tcp->flags == RST_FTCP && stats->rst_count < 65535)
+		stats->rst_count++;
 	// порты
 	if (check_tcp_port(tcp->dst_port))
 	{
-		if (stat->al_tcp_port_count < 65535)
-			stat->al_tcp_port_count++;
+		if (stats->al_tcp_port_count < 65535)
+			stats->al_tcp_port_count++;
 	}
 	else
 	{
-		if (stat->un_tcp_port_count < 65535)
-			stat->un_tcp_port_count++;
+		if (stats->un_tcp_port_count < 65535)
+			stats->un_tcp_port_count++;
 	}	
 	is_stats_changed = TRUE;
 	ReleaseMutex(stat_mutex);	
@@ -370,18 +372,17 @@ void analyze_udp(PackageData *pd)
 	info.shift += sizeof(UDPHeader);
 	// Сбор статистики
 	WaitForSingleObject(stat_mutex, INFINITE);
-	NBStatistics *stat = &end_nbslist->stat;
-	stat->udp_count++;
+	stats->udp_count++;
 	// порты
 	if (check_udp_port(udp->dst_port))
 	{
-		if (stat->al_udp_port_count < 65535)
-			stat->al_udp_port_count++;
+		if (stats->al_udp_port_count < 65535)
+			stats->al_udp_port_count++;
 	}
 	else
 	{
-		if (stat->un_udp_port_count < 65535)
-			stat->un_udp_port_count++;
+		if (stats->un_udp_port_count < 65535)
+			stats->un_udp_port_count++;
 	}	
 	is_stats_changed = TRUE;
 	ReleaseMutex(stat_mutex);	
@@ -404,8 +405,7 @@ void analyze_icmp(PackageData *pd)
 	info.shift += sizeof(ICMPHeader);
 	// Сбор статистики
 	WaitForSingleObject(stat_mutex, INFINITE);
-	NBStatistics *stat = &end_nbslist->stat;
-	stat->icmp_count++;
+	stats->icmp_count++;
 	is_stats_changed = TRUE;
 	ReleaseMutex(stat_mutex);	
 	// Переход к данным
@@ -423,8 +423,7 @@ void analyze_ip(PackageData *pd)
 	data += info.shift;
 	// Сбор статистики
 	WaitForSingleObject(stat_mutex, INFINITE);
-	NBStatistics *stat = &end_nbslist->stat;
-	stat->ip_count++;
+	stats->ip_count++;
 	is_stats_changed = TRUE;
 	ReleaseMutex(stat_mutex);
 	// Вывод в файл
@@ -522,28 +521,6 @@ void get_localtime(char* buff)
 	ti = localtime(&tt);
 	// Запись в буффер
 	sprintf(buff, "%02d:%02d:%02d", ti->tm_hour, ti->tm_min, ti->tm_sec);
-}
-
-void create_statistics()
-{
-	NBStatisticsList *nbslist;
-	nbslist = (NBStatisticsList *)malloc(sizeof(NBStatisticsList));
-	ZeroMemory(&nbslist->stat, sizeof(NBStatistics));
-	nbslist->next = NULL;
-	// Добавление его в список
-	WaitForSingleObject(stat_mutex, INFINITE);
-	if (beg_nbslist == NULL)
-	{
-		beg_nbslist = nbslist;
-		end_nbslist = nbslist;
-	}
-	else
-	{
-		end_nbslist->next = nbslist;
-		end_nbslist = nbslist;
-	}
-	is_stats_changed = FALSE;
-	ReleaseMutex(stat_mutex);	
 }
 
 void add_syn_tcp_list(unsigned long src)
@@ -720,15 +697,20 @@ DWORD WINAPI nbs_thread(LPVOID ptr)
 			char time_buff[9];
 			get_localtime(time_buff); 
 			// Запись статистики
-			NBStatistics *stat = &end_nbslist->stat;
 			fprint_f(fid_stat, stat_log_format, time_buff,
-				stat->tcp_count, stat->udp_count, stat->icmp_count, stat->ip_count,
-				stat->syn_count, stat->ask_sa_count, stat->fin_count, stat->rst_count,
-				stat->al_tcp_port_count, stat->un_tcp_port_count,
-				stat->al_udp_port_count, stat->un_udp_port_count);
+				stats->tcp_count, stats->udp_count,
+				stats->icmp_count, stats->ip_count,
+				stats->syn_count, stats->ask_sa_count,
+				stats->fin_count, stats->rst_count,
+				stats->al_tcp_port_count, stats->un_tcp_port_count,
+				stats->al_udp_port_count, stats->un_udp_port_count);
 		}
 		// Добавление новой статистики, для сохранения предыдущей
-		create_statistics();
+		if (is_stats_changed)
+		{
+			stats = get_statistics();
+			is_stats_changed = FALSE;
+		}
 		Sleep(stat_col_period * 1000);
 	}
 }

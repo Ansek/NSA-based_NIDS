@@ -10,8 +10,10 @@
 #define __SETTINGS_H__
 
 #include <stdio.h>
+#include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
+#include <windows.h>
 
 #define FILE_NAME "config.ini"		// Имя файла настроек
 #define SETTINGS_BUFFER_SIZE 64		// Размер буфера для извлечения текста

@@ -1,4 +1,6 @@
 DB/
 Log/
+tests/src/
 *.o
 *.exe
+

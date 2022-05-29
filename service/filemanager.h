@@ -9,8 +9,8 @@
 #ifndef __FILEMANAGER_H__
 #define __FILEMANAGER_H__
 
-#include <windows.h>
 #include <dir.h>
+#include <time.h>
 
 #include "settings.h"
 

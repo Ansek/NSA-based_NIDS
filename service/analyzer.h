@@ -10,9 +10,7 @@
 #define __ANALYZER_H__
 
 #include "filemanager.h"
-
-#include <windows.h>
-#include <time.h>
+#include "algorithm.h"
 
 #define PACKAGE_DATA_SIZE sizeof(void *) * 2  // Размер PackageData без буфера 
 #define PACKAGE_BUFFER_SIZE            65535  // Размер буфера пакета
@@ -72,30 +70,6 @@ typedef struct ICMPHeader
 	unsigned short	field1;     // Поля зависят от значений 
 	unsigned short	field2;     // type и code
 } ICMPHeader;
-
-// Статистика поведения сети
-typedef struct NBStatistics
-{
-	unsigned short tcp_count;          // Общее количество пакетов TCP
-	unsigned short udp_count;          // Общее количество пакетов UDP
-	unsigned short icmp_count;         // Общее количество пакетов ICMP
-	unsigned short ip_count;           // Общее количество пакетов других протоколов
-	unsigned short syn_count;          // Количество полуоткрытых соединений TCP 
-	unsigned short ask_sa_count;       // Количество открытых соединений TCP (ASK после SYN+ASK)
-	unsigned short fin_count;          // Количество закрытых соединений TCP
-	unsigned short rst_count;          // Количество сброшенных соединений TCP
-	unsigned short al_tcp_port_count;  // Количество обращений к разрешенным портам TCP
-	unsigned short un_tcp_port_count;  // Количество обращений к неразрешенным портам TCP
-	unsigned short al_udp_port_count;  // Количество обращений к разрешенным портам UDP
-	unsigned short un_udp_port_count;  // Количество обращений к неразрешенным портам UDP
-} NBStatistics;
-
-// Список статистик
-typedef struct NBStatisticsList
-{
-	NBStatistics stat;                 // Статистика за данный период
-	struct NBStatisticsList *next;     // Следующий статистика
-} NBStatisticsList;
 
 // Список полуоткрытых соединий
 typedef struct SynTCPList
