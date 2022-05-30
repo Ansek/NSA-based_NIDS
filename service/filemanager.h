@@ -15,25 +15,40 @@
 #include "settings.h"
 
 #define FILE_NAME_SIZE 256
-#define FID unsigned char
+#define FID uint8_t
+
+typedef enum Format 
+{
+	IP, TCP, UDP, ICMP, STATS
+} Format;
 
 // Файл в который надо сохранить фрагменты
-typedef struct FilesList
+typedef struct FileList
 {
-	FID id;						// Идентификатор файла	
-	FILE *file;					// Идентификатор потока файла
-	struct FilesList *next;		// Ссылка на следующий файл
-} FilesList;
+	FID id;             // Идентификатор для доступа
+	FILE *file;         // Указатель на файл
+	struct FileList *next; // Ссылка на следующий файл
+} FileList;
 
 // Хранение информации о пакете для вывода в лог
 typedef struct PackageInfo
 {
-	char time_buff[9];          // Время начала анализа
-	char src_buff[16];          // Адрес отправителя
-	char dst_buff[16];          // Адрес получателя
-	unsigned short size;        // Размер пакета
-	unsigned short shift;       // Смещение до данных
+	FID fid;            // Идентификатор на файл
+	char time_buff[9];  // Время начала анализа
+	char src_buff[16];  // Адрес отправителя
+	char dst_buff[16];  // Адрес получателя
+	uint16_t size;      // Размер пакета
+	uint16_t shift;     // Смещение до данных
+	const char *data;   // Указатель на начало данных
 } PackageInfo;
+
+// Для фиксирования времени обучения
+typedef struct TimeData
+{
+	size_t days;      // Дни
+	uint8_t hours;    // Часы
+	uint8_t minutes;  // Минуты
+} TimeData;
 
 /**
 @brief Запускает менеджер по сохранению файлов
@@ -41,17 +56,17 @@ typedef struct PackageInfo
 void run_filemanager();
 
 /**
-@brief Открывает файл
-@param filename Имя файла
+@brief Добавляет файл логов в список 
+@param name Имя файла лога
 @return Идентификатор для доступа к файлу
 */
-FID open_file(const char *filename);
+FID add_log_file(const char *name);
 
 /**
 @brief Создает новый файл с заданным именем
 @param text - Текст ошибки
 */
-FILE *create_file(const char* filename);
+FILE *create_file(const char *filename);
 
 /**
 @brief Добавляет файл в список
@@ -61,80 +76,68 @@ FILE *create_file(const char* filename);
 FID add_to_flist(FILE *file);
 
 /**
-@brief Записывает строку в файл
-@param id Идентификатор для доступа к файлу
-@param text Текст для записи
-*/
-void fprint_s(FID id, const char *text);
-
-/**
-@brief Записывает строку определенного размера в файл
-@param id Идентификатор для доступа к файлу
-@param text Текст для записи
-@param size Размер данных
-*/
-void fprint_n(FID id, const char *text, size_t size);
-
-/**
-@brief Записывает форматированную строку в файл
-@param id Идентификатор для доступа к файлу
-@param text Текст для записи
-*/
-void fprint_f(FID id, const char* text, ...);
-
-/**
 @brief Записывает информацию о пакете в файл
-@param id Идентификатор для доступа к файлу
+@param info Дополнительная информация для записи
 @param data Начало данных пакета
-@param pi Информация о пакете
-@param text Текст для записи
+@param format Форматированные данные
 */
-void fprint_package(FID id, const char *data, PackageInfo *info, const char *text, ...);
+void log_package(PackageInfo *info, const char *format, ...);
+
+/**
+@brief Записывает статистику в файл
+@param format Форматированные данные
+*/
+void log_stats(const char *format, ...);
+
+/**
+@brief Сохранение базы детекторов
+@param td Время затраченное на обучение
+@param buff Данные для записи в файл
+*/
+void save_detectors(TimeData *td, const char *buff);
+
+/**
+@brief Прибавляет минут к счётчик времени обучения
+@param td Структура для хранения времени
+@param minutes На сколько минут надо увеличить
+*/
+void add_time(TimeData *td, uint32_t minutes);
+
+/**
+@brief Записывает в буфер текущее время
+@param buff Буферкуда надо записать
+*/
+void get_localtime(char *buff);
+
+/**
+@brief Возвращает шаблон для записи в файл
+@param format Идентификатор шаблона
+@return Указатель на шаблон
+*/
+const char* get_format(Format format);
 
 /**
 @brief Выводит текст сообщения пользователю
 @param text - Текст сообщения
 */
-void print_msglog(const char* text);
-
-/**
-@brief Вывод одного символа 
-@param symbol - Код символа
-*/
-void print_msglogc(const char symbol);
+void print_msglog(const char *text);
 
 /**
 @brief Выводит форматированный текст сообщения пользователю
 @param text - Текст сообщения
 */
-void print_msglogf(const char* text, ...);
+void print_msglogf(const char *text, ...);
 
 /**
 @brief Выводит текст ошибки пользователю
 @param text - Текст ошибки
 */
-void print_errlog(const char* text);
+void print_errlog(const char *text);
 
 /**
 @brief Выводит форматированный текст ошибки пользователю
 @param text - Текст ошибки
 */
-void print_errlogf(const char* text, ...);
-
-/**
-@brief Возращает флаг доступности вывода сообщений пользователю
-@param symbol - Код символа
-*/
-Bool get_msg_log_enabled();
-
-/**
-@brief Блокирование потока для записи в файла
-*/
-void lock_file();
-
-/**
-@brief Блокирование потока для записи в файла
-*/
-void unlock_file();
+void print_errlogf(const char *text, ...);
 
 #endif

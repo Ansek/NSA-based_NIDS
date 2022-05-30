@@ -9,14 +9,18 @@
 #include "sniffer.h"
 
 char package_buffer[PACKAGE_BUFFER_SIZE];
-AdapterList *beg_alist = NULL;			// Ссылки на список адаптеров
-AdapterList *end_alist = NULL;	
-const char *adapter_log_dirname = NULL;	// Каталог для хранения логов адаптера
+AdapterList *beg_alist = NULL;  // Ссылки на список адаптеров
+AdapterList *end_alist = NULL;
+ 
+/**
+@brief Подключение к адаптеру для прослушивания
+@param addr - Адрес адаптера
+*/
+void connection_to_adapter(const char *addr);
 
-// Вспомогательные функции
-// Подключение к адаптеру для прослушивания
-void connection_to_adapter(char *addr);
-// Поток для анализа трафика
+/**
+@brief Поток для анализа трафика
+*/
 DWORD WINAPI sn_thread(LPVOID ptr);
 
 void run_sniffer()
@@ -26,70 +30,51 @@ void run_sniffer()
 	if (WSAStartup(MAKEWORD(2, 2), &wsadata) != NO_ERROR)
 		print_msglog("WinSock initialization failed!\n");
 	
+	PList *tcp_port = create_plist();
+	PList *udp_port = create_plist();
+	
 	// Получение параметров
 	while (is_reading_settings_section("Sniffer"))
 	{
-		char *name = read_setting_name();
+		const char *name = read_setting_name();
 		if (strcmp(name, "adapters") == 0)
 			while (is_reading_setting_value())
 				connection_to_adapter(read_setting_s());
-		else if (strcmp(name, "adapter_log_dirname") == 0)
-			adapter_log_dirname = read_setting_s();
 		else if (strcmp(name, "allowed_tcp_ports") == 0)
 			while (is_reading_setting_value())
-				add_tcp_port(read_setting_i());
+				add_in_plist(tcp_port, htons(read_setting_u()));
 		else if (strcmp(name, "allowed_udp_ports") == 0)
 			while (is_reading_setting_value())
-				add_udp_port(read_setting_i());
+				add_in_plist(udp_port, htons(read_setting_u()));
 		else
 			print_not_used(name);
 	}
-	
-	// Настройка папки логов
-	if (adapter_log_dirname == NULL)
-		adapter_log_dirname = "LOG//";
-	// Добавление файла лога статистики
-	char filename[FILE_NAME_SIZE];
-	sprintf(filename, "%sstatistics.log", adapter_log_dirname);
-	FID fid = open_file(filename);
-	set_fid_stat(fid);
-	
+
 	// Инициализация анализаторов
-	run_analyzer();
+	run_analyzer(tcp_port, udp_port);
 }
 
-// Подключение к адаптеру для прослушивания
-void connection_to_adapter(char *addr)
+void connection_to_adapter(const char *addr)
 {
-	// Формирование имени файлов логов
-	char filename[FILE_NAME_SIZE];
-	sprintf(filename, "%s%s.log", adapter_log_dirname, addr);
-	FID fid = open_file(filename);
 	// Создание отдельного потока
 	AdapterList *alist = (AdapterList *)malloc(sizeof(AdapterList));
 	alist->data.addr = addr;
-	alist->data.fid = open_file(filename);
-	alist->hThread	= CreateThread(NULL, 0, sn_thread, &(alist->data), 0, NULL);
+	alist->data.fid = add_log_file(addr);
+	alist->hThread	= CreateThread(NULL, 0, sn_thread, &alist->data, 0, NULL);
 	if (alist->hThread == NULL)
 		print_errlog("Failed to create thread!\n");
 	alist->next = NULL;
 	// Добавление его в список
 	if (beg_alist == NULL)
-	{
 		beg_alist = alist;
-		end_alist = alist;
-	}
 	else
-	{
 		end_alist->next = alist;
-		end_alist = alist;
-	}
+	end_alist = alist;
 }
 
-// Поток для анализа трафик
 DWORD WINAPI sn_thread(LPVOID ptr)
 {
-	AdapterData* data = (AdapterData*)ptr;
+	AdapterData *data = (AdapterData *)ptr;
 	// Создание сокета
 	SOCKET s = socket(AF_INET, SOCK_RAW, IPPROTO_IP);
 	if (s == INVALID_SOCKET) {
@@ -109,7 +94,6 @@ DWORD WINAPI sn_thread(LPVOID ptr)
 	ioctlsocket(s, SIO_RCVALL, &flag);
 	
 	print_msglogf("Listening on adapter with address %s.\n", data->addr);
-
 	// Просмотр всех пакетов
 	while (TRUE)
 	{
@@ -121,7 +105,7 @@ DWORD WINAPI sn_thread(LPVOID ptr)
 	}
 }
 
-char *get_protocol_name(const unsigned char protocol)
+const char *get_protocol_name(const uint8_t protocol)
 {
 	char *s = "Unknown protocol";
 	switch (protocol)
@@ -129,23 +113,14 @@ char *get_protocol_name(const unsigned char protocol)
 		case IPPROTO_IP:
 			s = "IP";
 			break;
-		case IPPROTO_ICMP:
-			s = "ICMP";
-			break;
 		case IPPROTO_IGMP:
 			s = "IGMP";
 			break;
 		case IPPROTO_GGP:
 			s = "GGP";
 			break;
-		case IPPROTO_TCP:
-			s = "TCP";
-			break;
 		case IPPROTO_PUP:
 			s = "PUP";
-			break;
-		case IPPROTO_UDP:
-			s = "UDP";
 			break;
 		case IPPROTO_IDP:
 			s = "IDP";
@@ -161,7 +136,7 @@ char *get_protocol_name(const unsigned char protocol)
 			break;
 		case IPPROTO_ICMPV6:
 			s = "ICMPV6";
-			break;			
+			break;
 	}	
 	return s;
 }

@@ -8,9 +8,9 @@
 
 #include "settings.h"
 
-char settings_buffer[SETTINGS_BUFFER_SIZE];	// Буфер для извленичия текста
-FILE *settings;  						    // Объект файла настроек
-Bool is_reading_value;	// Для оповещения о нескольких значений параметра
+char settings_buffer[SETTINGS_BUFFER_SIZE]; // Буфер для извлечения текста
+FILE *settings;        // Объект файла настроек
+Bool is_reading_value; // Для оповещения о нескольких значений параметра
 
 // Вспомогательная, для проверки на новый параметр
 Bool check_available()
@@ -21,7 +21,7 @@ Bool check_available()
 		// Игнорирование строки комментария
 		while (c != EOF && c == ';')
 		{
-			//Cчитывание до новой строки
+			// Считывание до новой строки
 			do {
 				c = getc(settings);
 			} while (c != EOF && c != '\n');
@@ -37,7 +37,7 @@ Bool check_available()
 	return FALSE;
 }
 
-Bool is_reading_settings_section(char *section)
+Bool is_reading_settings_section(const char *section)
 {
 	Bool is_available = FALSE;
 	// Файл настроек уже просматривается
@@ -54,7 +54,7 @@ Bool is_reading_settings_section(char *section)
 	else 
 	{
 		char c;
-		char *p = NULL;
+		const char *p = NULL;
 		settings = fopen(FILE_NAME, "r");
 		// Поиск нужной секции
 		do {
@@ -76,7 +76,7 @@ Bool is_reading_settings_section(char *section)
 				// Если нашли нужную секцию
 				if (c != EOF && c == ']')
 				{
-					//Cчитывание до новой строки
+					// Считывание до новой строки
 					do {
 						c = getc(settings);
 					} while (c != EOF && c != '\n');
@@ -105,7 +105,7 @@ void check_setting_value()
 	ungetc(c, settings);
 }
 
-char *read_setting_name()
+const char *read_setting_name()
 {
 	int i = 0;
 	// Считывание имени до разделителя "="
@@ -139,7 +139,7 @@ void check_setting()
 {
 	char c;
 	is_reading_value = FALSE;
-	//Cчитывание до новой строки
+	// Считывание до новой строки
 	do {
 		c = getc(settings);
 		// Если обнаружен разделитель
@@ -148,30 +148,22 @@ void check_setting()
 			check_setting_value();
 			break;
 		}
-	} while (c != EOF && c != '\n');	
+	} while (c != EOF && c != '\n');
 }
 
-int read_setting_i()
+uint32_t read_setting_u()
 {
-	int i;
-	fscanf(settings, "%d", &i);
+	uint32_t i;
+	fscanf(settings, "%u", &i);
 	check_setting();
 	return i;
 }
 
-float read_setting_f()
-{
-	float f;
-	fscanf(settings, "%f", &f);
-	check_setting();
-	return f;
-}
-
-char *read_setting_s()
+const char *read_setting_s()
 {
 	int i = 0;
 	char c;
-	//Cчитывание до новой строки
+	// Считывание до новой строки
 	while(i < SETTINGS_BUFFER_SIZE - 1)
 	{
 		c = getc(settings);
@@ -184,7 +176,7 @@ char *read_setting_s()
 			check_setting_value();
 			break;
 		}
-		//Если конец строки
+		// Если конец строки
 		if (c == EOF || c == '\n')
 		{
 			is_reading_value = FALSE;
@@ -208,12 +200,51 @@ char *read_setting_s()
 	}
 } 
 
-void print_not_used(char *name)
+void print_not_used(const char *name)
 {
 	char c;
 	printf("Parameter \"%s\" not used!\n", name);
-	//Cчитывание до новой строки
+	// Считывание до новой строки
 	do {
 		c = getc(settings);
 	} while (c != EOF && c != '\n');
+}
+
+PList* create_plist()
+{
+	PList *pl = (PList *)malloc(sizeof(PList));
+	pl->beg = NULL;
+	pl->end = NULL;
+	pl->mutex = CreateMutex(NULL, FALSE, NULL);
+	return pl;
+}
+
+void add_in_plist(PList *pl, uint16_t value)
+{
+	PNode *node = (PNode *)malloc(sizeof(PNode));
+	node->value = value;
+	node->next = NULL;
+	// Добавление его в список
+	WaitForSingleObject(pl->mutex, INFINITE);
+	if (pl->beg == NULL)
+		pl->beg = node;
+	else
+		pl->end->next = node;
+	pl->end = node;
+	ReleaseMutex(pl->mutex);
+}
+
+Bool contain_in_plist(PList *pl, uint16_t value)
+{
+	Bool res = FALSE;
+	PNode *p = pl->beg;
+	while (p != NULL)
+		if (p->value == value)
+		{
+			res = TRUE;
+			break;
+		}
+		else
+			p = p->next;
+	return res;
 }

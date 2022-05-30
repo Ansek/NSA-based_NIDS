@@ -8,128 +8,143 @@
 
 #include "analyzer.h"
 
-NBStats *stats = NULL;         // Для сбора статитики поведения сети
+NBStats *stats  = NULL;     // Для сбора статистики  поведения сети
+PList *tcp_ports = NULL;    // Список разрешенных TCP портов
+PList *udp_ports = NULL;    // Список разрешенных UDP портов
+PList *min_det_save = NULL; // Минуты между сохранением детекторов
+AnalyzerList *alist = NULL; // Ссылка на циклический список анализаторов
+SynTCPList *beg_synlist = NULL; // Список полуоткрытых соединений 
+SynTCPList *end_synlist = NULL;
+Bool is_stats_changed = FALSE;  // Были ли изменения в статистике
+uint16_t alist_count; // Количество анализаторов в списке
+HANDLE list_mutex;    // Мьютекс для работы со списком
+HANDLE lock_mutex;    // Мьютекс для контроля блокировок
+HANDLE stat_mutex;    // Мьютекс для работы со статистикой
 
-AnalyzerList *alist = NULL;			// Ссылка на циклический список анализаторов
-SavePeriodsList* beg_splist = NULL; // Минуты между сохранением детекторов
-SavePeriodsList* end_splist = NULL; 
+// Параметры из файла конфигурации
+uint16_t max_alist_count;    // Максимальное количество анализаторов
+uint16_t stat_col_period;    // Период сбора статистики в секундах
+size_t analyzer_buffer_size; // Максимальный размер буфера анализатора
 
-SynTCPList* beg_synlist = NULL; 	// Список полуоткрытых соединений 
-SynTCPList* end_synlist = NULL;
-unsigned short alist_count;			// Количество анализаторов в списке
-unsigned short max_alist_count;		// Максимальное количество анализаторов
-unsigned short adapter_data_size;	// Размер данных адаптера без буфера
-unsigned short stat_col_period;		// Период сбора статистики в секундах
-unsigned short *allowed_tcp_ports = NULL;	// Список разрешенных TCP портов
-unsigned short *allowed_udp_ports = NULL;	// Список разрешенных UDP портов
-unsigned short allowed_tcp_count = 0;	// Количество разрешенных TCP портов
-unsigned short allowed_udp_count = 0;	// Количество разрешенных UDP портов
-size_t analyzer_buffer_size;		// Максимальный размер буфера анализатора
-FID fid_stat;                       // Хранит идентификатор на файл статистики
-Bool is_stats_changed = FALSE;		// Были ли изменения в статистике
-HANDLE list_mutex;					// Мьютекс для работы со списком
-HANDLE lock_mutex;					// Мьютекс для контроля блокировок
-HANDLE stat_mutex;                  // Мьютекс для работы со статистикой
-
-const char *db_detectors_dirname = NULL; // Путь к файлам детекторов
-
-// Шаблон для вывода информации о TCP
-const char* tcp_log_format = "\
-%s. TCP(%s): %s:%d to %s:%d Size: %d\n\
-Data: \"";
-// Шаблон для вывода информации о UDP
-const char* udp_log_format = "\
-%s. UDP: %s:%d to %s:%d Size: %d\n\
-Data: \"";
-// Шаблон для вывода информации о ICMP
-const char* icmp_log_format = "\
-%s. ICMP(%d, %d): %s to %s Size: %d\n\
-Data: \"";
-// Шаблон для вывода информации о пакете по умолчанию
-const char* ip_log_format = "\
-%s. %s: %s to %s Size: %d\n\
-Data: \"";
-// Шаблон для вывода информации о статистике
-const char* stat_log_format = "\
-%s\n\
-tc=%d;\t\tuc=%d;\t\tic=%d;\t\tipc=%d;\n\
-sc=%d;\t\tac=%d;\t\tfc=%d;\t\trc=%d;\n\
-atc=%d;\t\tutc=%d;\t\tauc=%d;\t\tuuc=%d;\n\n";
-
-// Вспомогательные функции
-// Создает анализатор в новом потоке
+/**
+@brief Создает анализатор в новом потоке
+@param unlock Должен ли анализтор быть разблокирован
+@return - Указатель на список
+*/
 AnalyzerList *create_analyzer(Bool unlock);
-// Получает свободный анализатор
-AnalyzerData *get_free_analyzer(size_t length);
-// Анализирует пакет протокола TCP
-void analyze_tcp(PackageData *pd);
-// Анализирует пакет протокола UDP
-void analyze_udp(PackageData *pd);
-// Анализирует пакет протокола ICMP
-void analyze_icmp(PackageData *pd);
-// Анализирует пакет без связи с протоколом
-void analyze_ip(PackageData *pd);
-// Разбор нужных элементов IP заголовка
-PackageInfo get_ip_info(PackageData *pd);
-// Блокировка анализатора
-// @return TRUE - если заблокирован данным потоком
-Bool lock_analyzer(AnalyzerData *data);
-// Разблокировка анализатора
-void unlock_analyzer(AnalyzerData *data);
-// Добавляет промежуток в минутах между сохранением детекторов
-void add_save_period(int period);
-// Прибавляет минуты к td
-void add_time(TimeData *td, int minutes);
-// Записывает в буфер текущее время
-void get_localtime(char* buff);
-// Добавляет адрес в список полуоткрытых соединения
-void add_syn_tcp_list(unsigned long src);
-// Удаляет адрес из списка полуоткрытых соединения
-// @return TRUE - был ли такой элемент в списке
-Bool remove_syn_tcp_list(unsigned long src);
-// Проверяет, есть ли порт в списке TCP
-Bool check_tcp_port(unsigned short nport);
-// Проверяет, есть ли порт в списке UDP
-Bool check_udp_port(unsigned short nport);
-// Поток для проверки пакетов
-DWORD WINAPI an_thread(LPVOID ptr);
-// Поток для переодичного сохранения детекторов
-DWORD WINAPI sd_thread(LPVOID ptr);
-// Поток для фиксации данных статистики
-DWORD WINAPI nbs_thread(LPVOID ptr);
 
-void run_analyzer()
+/**
+@brief Получает свободный анализатор
+@param length - Размер пространства, которое нужно занять
+*/
+AnalyzerData *get_free_analyzer(size_t length);
+
+/**
+@brief Анализирует пакет протокола TCP
+@param pd - Данные пакета
+*/
+void analyze_tcp(PackageData *pd);
+ 
+/**
+@brief Анализирует пакет протокола UDP
+@param pd - Данные пакета
+*/
+void analyze_udp(PackageData *pd);
+
+/**
+@brief Анализирует пакет протокола ICMP
+@param pd - Данные пакета
+*/
+void analyze_icmp(PackageData *pd);
+
+/**
+@brief Анализирует пакет без связи с протоколом
+@param pd - Данные пакета
+*/
+void analyze_ip(PackageData *pd);
+
+/**
+@brief Разбор нужных элементов IP заголовка
+@param pd - Данные пакета
+@return Структура с основным содержимым для вывода
+*/
+PackageInfo get_ip_info(PackageData *pd);
+
+/**
+@brief Блокировка анализатора
+@param data - Данные анализатора
+@return TRUE - если заблокирован данным потоком
+*/
+Bool lock_analyzer(AnalyzerData *data);
+
+/**
+@brief Разблокировка анализатора
+@param data - Данные анализатора
+*/
+void unlock_analyzer(AnalyzerData *data);
+
+/**
+@brief Добавляет адрес в список полуоткрытых соединения
+@param src - Адрес отправителя
+*/
+void add_syn_tcp_list(uint32_t src);
+
+/**
+@brief Удаляет адрес из списка полуоткрытых соединения
+@param src - Адрес отправителя
+@return TRUE - был ли такой элемент в списке
+*/
+Bool remove_syn_tcp_list(uint32_t src);
+
+/**
+@brief Поток для проверки пакетов
+*/
+DWORD WINAPI an_thread(LPVOID ptr);
+
+/**
+@brief Поток для периодичного сохранения детекторов
+*/
+DWORD WINAPI sd_thread(LPVOID ptr);
+
+/**
+@brief Поток для фиксации данных статистики
+*/
+DWORD WINAPI stats_thread(LPVOID ptr);
+
+void run_analyzer(PList *tcp_ps, PList *udp_ps)
 {
-	unsigned short min_alist_count;
+	tcp_ports = tcp_ps;
+	udp_ports = udp_ps;
+	min_det_save = create_plist(); 
+	
+	uint16_t min_alist_count;
 	list_mutex = CreateMutex(NULL, FALSE, NULL);
 	lock_mutex = CreateMutex(NULL, FALSE, NULL);
-		
+
 	// Получение параметров
 	while (is_reading_settings_section("Analyzer"))
 	{
-		char *name = read_setting_name();
+		const char *name = read_setting_name();
 		if (strcmp(name, "min_analyzer_count") == 0)
-			min_alist_count = read_setting_i();
+			min_alist_count = read_setting_u();
 		else if (strcmp(name, "max_analyzer_count") == 0)
-			max_alist_count = read_setting_i();
+			max_alist_count = read_setting_u();
 		else if (strcmp(name, "max_packet_in_analyzer") == 0)
-			analyzer_buffer_size = read_setting_i() *
+			analyzer_buffer_size = read_setting_u() *
 				(PACKAGE_DATA_SIZE + PACKAGE_BUFFER_SIZE);
-		else if (strcmp(name, "db_detectors_dirname") == 0)
-			db_detectors_dirname = read_setting_s();
 		else if (strcmp(name, "detector_save_periods") == 0)
 			while (is_reading_setting_value())
-				add_save_period(read_setting_i());
+				add_in_plist(min_det_save, read_setting_u());
 		else if (strcmp(name, "stat_col_period") == 0)
-			stat_col_period = read_setting_i();
+			stat_col_period = read_setting_u();
 		else
 			print_not_used(name);
 	}
-	
+
 	// Инициализация параметров алгоритм отрицательного отбора
 	init_algorithm();
 	stats = get_statistics();
-	
+
 	// Создание потока для сохранения детекторов
 	HANDLE hThread = CreateThread(NULL, 0, sd_thread, NULL, 0, NULL);
 	if (hThread == NULL)
@@ -137,9 +152,9 @@ void run_analyzer()
 		print_msglog("Thread to save detectors not created!");
 		exit(6);
 	}
-	
+
 	// Создание потока для сохранения статистики
-	hThread = CreateThread(NULL, 0, nbs_thread, NULL, 0, NULL);
+	hThread = CreateThread(NULL, 0, stats_thread, NULL, 0, NULL);
 	if (hThread == NULL)
 	{
 		print_msglog("Thread to save statistics not created!");
@@ -154,23 +169,18 @@ void run_analyzer()
 void analyze_package(AdapterData *data)
 {
 	IPHeader *package = (IPHeader *)data->buffer;
-	unsigned short len = (package->length << 8) + (package->length >> 8);
+	uint16_t len = (package->length << 8) + (package->length >> 8);
 	size_t size = len + PACKAGE_DATA_SIZE;
 	AnalyzerData *adata = get_free_analyzer(size);
 	// Копирование информации в буфер анализатора
 	WaitForSingleObject(adata->mutex, INFINITE);
 	adata->w_package->adapter = data;
 	adata->w_package->next = (PackageData *)((char *)adata->w_package + size);
-	memcpy(&(adata->w_package->header), data->buffer, len);
+	memcpy(&adata->w_package->header, data->buffer, len);
 	adata->w_package = adata->w_package->next;
 	adata->pack_count++;
 	ReleaseMutex(adata->mutex);
 	unlock_analyzer(adata);
-}
-
-void set_fid_stat(FID fid)
-{
-	fid_stat = fid;
 }
 
 AnalyzerList *create_analyzer(Bool lock)
@@ -191,7 +201,7 @@ AnalyzerList *create_analyzer(Bool lock)
 		al->data.r_package = (PackageData *)(PackageData *)al->data.buffer;
 		al->data.w_package = (PackageData *)(PackageData *)al->data.buffer;
 		al->data.r_package->adapter = NULL; // Как признак отсутствия пакета
-		al->hThread	= CreateThread(NULL, 0, an_thread, &(al->data), 0, NULL);
+		al->hThread	= CreateThread(NULL, 0, an_thread, &al->data, 0, NULL);
 		if (al->hThread == NULL)
 			print_errlog("Failed to create thread!\n");
 		// Добавление его в циклический список
@@ -209,7 +219,7 @@ AnalyzerList *create_analyzer(Bool lock)
 	}
 	else
 	{
-		print_errlogf("The maximum number of analyzers has been reached [%d]",
+		print_errlogf("The maximum number of analyzers has been reached [%u]",
 			max_alist_count);
 	}
 	ReleaseMutex(list_mutex);
@@ -220,7 +230,7 @@ AnalyzerData *get_free_analyzer(size_t length)
 {
 	AnalyzerList *p = alist;
 	AnalyzerList *al = NULL;
-	unsigned short filled_count = 0;
+	uint16_t filled_count = 0;
 	do
 	{	
 		char *buffer_top = (p->data.buffer + analyzer_buffer_size);
@@ -242,7 +252,7 @@ AnalyzerData *get_free_analyzer(size_t length)
 					// Поиск последнего пакета
 					PackageData *pd = al->data.r_package;
 					while (pd->next != al->data.w_package)
-						pd = pd->next;				
+						pd = pd->next;
 					// Сброс записи на начало буфера
 					al->data.w_package = (PackageData *)al->data.buffer; 
 					pd->next = al->data.w_package;
@@ -271,7 +281,7 @@ AnalyzerData *get_free_analyzer(size_t length)
 			{
 				al = create_analyzer(TRUE);
 				// Если нельзя больше создавать анализаторы из-за ограничения
-				// и все анализаторы полностью заполненые
+				// и все анализаторы полностью заполненные
 				if (al == NULL && filled_count == alist_count)
 				{
 					print_msglog("Search analyzer to reset.\n");
@@ -292,7 +302,7 @@ AnalyzerData *get_free_analyzer(size_t length)
 								else
 									al->data.pack_count = 0;
 								ReleaseMutex(al->data.mutex);
-								print_msglogf("Analyzer #%d has been reset.\n", 
+								print_msglogf("Analyzer #%u has been reset.\n", 
 									al->data.id);
 							}
 							else
@@ -307,15 +317,15 @@ AnalyzerData *get_free_analyzer(size_t length)
 		p = p->next;
 	}
 	while (al == NULL);
-	return &(al->data);
+	return &al->data;
 }
 
 void analyze_tcp(PackageData *pd)
 {
 	PackageInfo info = get_ip_info(pd);
-	char *data = (char *)&(pd->header);
+	info.data  = (char *)&pd->header;
 	// Получаем заголовок протокола
-	TCPHeader *tcp = (TCPHeader *)(data + info.shift);
+	TCPHeader *tcp = (TCPHeader *)(info.data + info.shift);
 	info.shift += (tcp->length & 0xF0) >> 2;
 	// Сбор статистики
 	WaitForSingleObject(stat_mutex, INFINITE);
@@ -336,7 +346,7 @@ void analyze_tcp(PackageData *pd)
 	else if (tcp->flags == RST_FTCP && stats->rst_count < 65535)
 		stats->rst_count++;
 	// порты
-	if (check_tcp_port(tcp->dst_port))
+	if (contain_in_plist(tcp_ports, tcp->dst_port))
 	{
 		if (stats->al_tcp_port_count < 65535)
 			stats->al_tcp_port_count++;
@@ -354,9 +364,9 @@ void analyze_tcp(PackageData *pd)
 		if ((tcp->flags & 0x20 >> i) == 0)
 			flags[i] = '_';
 	// Переход к данным
-	data += info.shift;
+	info.data += info.shift;
 	// Вывод в файл
-	fprint_package(pd->adapter->fid, data, &info, tcp_log_format,
+	log_package(&info, get_format(TCP),
 		info.time_buff, flags,
 		info.src_buff, ntohs(tcp->src_port),
 		info.dst_buff, ntohs(tcp->dst_port),
@@ -366,15 +376,15 @@ void analyze_tcp(PackageData *pd)
 void analyze_udp(PackageData *pd)
 {
 	PackageInfo info = get_ip_info(pd);
-	char *data = (char *)&(pd->header);
+	info.data = (char *)&pd->header;
 	// Получаем заголовок протокола
-	UDPHeader *udp = (UDPHeader *)(data + info.shift);
+	UDPHeader *udp = (UDPHeader *)(info.data + info.shift);
 	info.shift += sizeof(UDPHeader);
 	// Сбор статистики
 	WaitForSingleObject(stat_mutex, INFINITE);
 	stats->udp_count++;
 	// порты
-	if (check_udp_port(udp->dst_port))
+	if (contain_in_plist(udp_ports, udp->dst_port))
 	{
 		if (stats->al_udp_port_count < 65535)
 			stats->al_udp_port_count++;
@@ -387,10 +397,9 @@ void analyze_udp(PackageData *pd)
 	is_stats_changed = TRUE;
 	ReleaseMutex(stat_mutex);	
 	// Переход к данным
-	data += info.shift;
+	info.data += info.shift;
 	// Вывод в файл
-	fprint_package(pd->adapter->fid, data, &info, udp_log_format,
-		info.time_buff,
+	log_package(&info, get_format(UDP), info.time_buff,
 		info.src_buff, ntohs(udp->src_port),
 		info.dst_buff, ntohs(udp->dst_port),
 		info.size);
@@ -399,9 +408,9 @@ void analyze_udp(PackageData *pd)
 void analyze_icmp(PackageData *pd)
 {
 	PackageInfo info = get_ip_info(pd);
-	char *data = (char *)&(pd->header);
+	info.data = (char *)&pd->header;
 	// Получаем заголовок протокола
-	ICMPHeader *icmp = (ICMPHeader *)(data + info.shift);
+	ICMPHeader *icmp = (ICMPHeader *)(info.data + info.shift);
 	info.shift += sizeof(ICMPHeader);
 	// Сбор статистики
 	WaitForSingleObject(stat_mutex, INFINITE);
@@ -409,9 +418,9 @@ void analyze_icmp(PackageData *pd)
 	is_stats_changed = TRUE;
 	ReleaseMutex(stat_mutex);	
 	// Переход к данным
-	data += info.shift;
+	info.data  += info.shift;
 	// Вывод в файл
-	fprint_package(pd->adapter->fid, data, &info, icmp_log_format,
+	log_package(&info, get_format(ICMP),
 		info.time_buff, icmp->type, icmp->code,
 		info.src_buff, info.dst_buff, info.size);
 }
@@ -419,15 +428,15 @@ void analyze_icmp(PackageData *pd)
 void analyze_ip(PackageData *pd)
 {
 	PackageInfo info = get_ip_info(pd);
-	char *data = (char *)(&pd->header);
-	data += info.shift;
+	info.data = (char *)(&pd->header);
+	info.data += info.shift;
 	// Сбор статистики
 	WaitForSingleObject(stat_mutex, INFINITE);
 	stats->ip_count++;
 	is_stats_changed = TRUE;
 	ReleaseMutex(stat_mutex);
 	// Вывод в файл
-	fprint_package(pd->adapter->fid, data, &info, icmp_log_format,
+	log_package(&info, get_format(IP),
 		info.time_buff, get_protocol_name(pd->header.protocol),
 		info.src_buff, info.dst_buff, info.size);
 }
@@ -435,6 +444,8 @@ void analyze_ip(PackageData *pd)
 PackageInfo get_ip_info(PackageData *pd)
 {
 	PackageInfo info;
+	// Запись идентификатор на файл
+	info.fid = pd->adapter->fid;
 	// Получение текущего времени
 	get_localtime(info.time_buff);
 	// Получение адресов
@@ -471,59 +482,7 @@ void unlock_analyzer(AnalyzerData *data)
 	ReleaseMutex(lock_mutex);
 }
 
-void add_save_period(int period)
-{
-	SavePeriodsList *splist;
-	splist = (SavePeriodsList *)malloc(sizeof(SavePeriodsList));
-	splist->period = period;
-	splist->next = NULL;
-	// Добавление его в список
-	if (beg_splist == NULL)
-	{
-		beg_splist = splist;
-		end_splist = splist;
-	}
-	else
-	{
-		end_splist->next = splist;
-		end_splist = splist;
-	}
-}
-
-void add_time(TimeData *td, int minutes)
-{
-	// Получение минут
-	td->minutes += minutes % 60;
-	if (td->minutes > 59)
-	{
-		td->hours++;
-		td->minutes -= 60;
-	}
-	minutes /= 60;
-	// Получение часов
-	td->hours += minutes % 24;
-	if (td->hours > 23)
-	{
-		td->days++;
-		td->hours -= 24;
-	}
-	minutes /= 24;
-	// Получение дней
-	td->days += minutes;
-}
-
-void get_localtime(char* buff)
-{
-	// Получение текущего времени
-	time_t tt;
-	struct tm *ti;
-	time(&tt);
-	ti = localtime(&tt);
-	// Запись в буффер
-	sprintf(buff, "%02d:%02d:%02d", ti->tm_hour, ti->tm_min, ti->tm_sec);
-}
-
-void add_syn_tcp_list(unsigned long src)
+void add_syn_tcp_list(uint32_t src)
 {
 	SynTCPList *p = beg_synlist;
 	// Попытка найти в списке
@@ -557,7 +516,7 @@ void add_syn_tcp_list(unsigned long src)
 	}
 }
 
-Bool remove_syn_tcp_list(unsigned long src)
+Bool remove_syn_tcp_list(uint32_t src)
 {
 	Bool res = FALSE;
 	SynTCPList *p = beg_synlist;
@@ -587,50 +546,10 @@ Bool remove_syn_tcp_list(unsigned long src)
 	}
 }
 
-void add_tcp_port(unsigned short hport)
-{
-	allowed_tcp_count++;
-	allowed_tcp_ports = realloc(allowed_tcp_ports, 
-		allowed_tcp_count * sizeof(short));
-	allowed_tcp_ports[allowed_tcp_count - 1] = htons(hport);
-}
-
-Bool check_tcp_port(unsigned short nport)
-{
-	Bool res = FALSE;
-	for (int i = 0; i < allowed_tcp_count; i++)
-		if (allowed_tcp_ports[i] == nport)
-		{
-			res = TRUE;
-			break;
-		}
-	return res;
-}
-
-void add_udp_port(unsigned short hport)
-{
-	allowed_udp_count++;
-	allowed_udp_ports = realloc(allowed_udp_ports, 
-		allowed_udp_count * sizeof(short));
-	allowed_udp_ports[allowed_udp_count - 1] = htons(hport);
-}
-
-Bool check_udp_port(unsigned short nport)
-{
-	Bool res = FALSE;
-	for (int i = 0; i < allowed_udp_count; i++)
-		if (allowed_udp_ports[i] == nport)
-		{
-			res = TRUE;
-			break;
-		}
-	return res;
-}
-
 DWORD WINAPI an_thread(LPVOID ptr)
 {
-	AnalyzerData* data = (AnalyzerData *)ptr;	
-	print_msglogf("Analyzer #%d launched\n", data->id);
+	AnalyzerData *data = (AnalyzerData *)ptr;
+	print_msglogf("Analyzer #%u launched\n", data->id);
 	while (TRUE)
 	{
 		if (data->pack_count)
@@ -663,30 +582,23 @@ DWORD WINAPI sd_thread(LPVOID ptr)
 	td.days = 0;
 	td.hours = 0;
 	td.minutes = 0;
-	while (beg_splist != NULL)
+	PNode* p = min_det_save->beg;
+	while (p != NULL)
 	{
 		// Засыпание на определенное количество минут
-		Sleep(beg_splist->period * 60000); // До 24 дней 
-		add_time(&td, beg_splist->period); // Увеличение на минуту
-		// Формирование имени файлов логов
-		if (db_detectors_dirname == NULL)
-			db_detectors_dirname = "DB//";
-		char filename[FILE_NAME_SIZE];
-		sprintf(filename, "%sdetectors [%d d. %d h. %d m.].db", 
-			db_detectors_dirname, td.days, td.hours, td.minutes);
-		// Сохранение файла
-		FILE *f = create_file(filename);
-		fprintf(f, "%d m.", beg_splist->period);
-		fclose(f);
+		Sleep(p->value * 60000); // До 24 дней 
+		add_time(&td, p->value); // Увеличение на минуту
+		// Сохранение данных
+		save_detectors(&td, "data");
 		// Переход к следующему элементу и освобождение памяти
-		SavePeriodsList* temp = beg_splist;
-		beg_splist = beg_splist->next;
+		PNode* temp = p;
+		p = p->next;
 		free(temp);
 		temp = NULL;
 	}
 }
 
-DWORD WINAPI nbs_thread(LPVOID ptr)
+DWORD WINAPI stats_thread(LPVOID ptr)
 {
 	while (TRUE)
 	{
@@ -695,16 +607,16 @@ DWORD WINAPI nbs_thread(LPVOID ptr)
 		{
 			// Получение времени
 			char time_buff[9];
-			get_localtime(time_buff); 
+			get_localtime(time_buff);
 			// Запись статистики
-			fprint_f(fid_stat, stat_log_format, time_buff,
+			log_stats(get_format(STATS), time_buff, 
 				stats->tcp_count, stats->udp_count,
 				stats->icmp_count, stats->ip_count,
 				stats->syn_count, stats->ask_sa_count,
 				stats->fin_count, stats->rst_count,
 				stats->al_tcp_port_count, stats->un_tcp_port_count,
 				stats->al_udp_port_count, stats->un_udp_port_count);
-		}
+			};
 		// Добавление новой статистики, для сохранения предыдущей
 		if (is_stats_changed)
 		{

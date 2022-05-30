@@ -49,19 +49,19 @@ void init_algorithm()
 	// Получение параметров
 	while (is_reading_settings_section("Algorithm"))
 	{
-		char *name = read_setting_name();
+		const char *name = read_setting_name();
 		if (strcmp(name, "detector_count") == 0)
-			max_dd_count = read_setting_i();
+			max_dd_count = read_setting_u();
 		else if (strcmp(name, "pattern_count") == 0)
-			max_pd_count = read_setting_i();
+			max_pd_count = read_setting_u();
 		else if (strcmp(name, "statistic_count") == 0)
-			max_sd_count = read_setting_i();
+			max_sd_count = read_setting_u();
 		else if (strcmp(name, "pattern_length") == 0)
-			pat_length = read_setting_i();
+			pat_length = read_setting_u();
 		else if (strcmp(name, "pattern_shift") == 0)
-			pat_shift = read_setting_i();
+			pat_shift = read_setting_u();
 		else if (strcmp(name, "affinity") == 0)
-			affinity = read_setting_i();
+			affinity = read_setting_u();
 		else
 			print_not_used(name);
 	}

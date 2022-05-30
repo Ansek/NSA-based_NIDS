@@ -14,7 +14,7 @@ int main()
 	run_filemanager();
 	
 	// Тестирование получения пакетов
-	run_sniffer();	
+	run_sniffer();
 	
 	while(!kbhit()){}
 	return 0;
