@@ -12,6 +12,7 @@
 
 extern uint8_t pat_length, pat_shift, affinity;
 extern WorkingMemory *pat_db;
+extern WorkingMemory *det_db;
 
 // Проверка на добавление шаблона в базу
 void test_BreakIntoPatterns_should_Add()
@@ -68,7 +69,7 @@ void test_BreakIntoPatterns_should_Replace()
 }
 
 // Проверка на корректность расчёта расстояния Хэмминга
-void test_HammingDistance_should_CorrectValue()
+void test_HammingDistance_should_Correctmean()
 {
 	TEST_ASSERT_EQUAL_UINT8(0, hamming_distance("12345", "12345"));
 	TEST_ASSERT_EQUAL_UINT8(1, hamming_distance("62345", "12345"));
@@ -78,12 +79,150 @@ void test_HammingDistance_should_CorrectValue()
 	TEST_ASSERT_EQUAL_UINT8(5, hamming_distance("67890", "12345"));
 }
 
+typedef struct MiniStats
+{
+	VectorType x, y, z; // uint16
+} MiniStats;
+
+// Проверка вычислений границ 
+void test_GetHRect_should_Correctmeans()
+{
+	MiniStats stats[5] = 
+	{
+		1, 9, 40,
+		2, 8, 50,
+		3, 7, 10,
+		4, 6, 20,
+		5, 5, 30
+	};
+	VectorType *hrect = get_hrect((VectorType *)stats, 5, 3);
+	VectorType expected[] = {1, 5, 10, 5, 9, 50};
+	TEST_ASSERT_EQUAL_UINT16_ARRAY(expected, hrect, 6);
+}
+
+// Проверка построения стуктуры дерева
+void test_CreateKDNode_CorrectStructure()
+{
+	MiniStats hrect[2] = 
+	{
+		0, 6, 8,    // min
+		5, 7, 10    // max
+	};
+	KDNode *node = create_kdnode((VectorType *)hrect, 0, 3, 5);
+	// Проверка только крайнего левого поддерева
+	TEST_ASSERT_EQUAL_UINT16(2, node->mean);
+	TEST_ASSERT_EQUAL_UINT16(6, node->left->mean);
+	node = node->left->left;
+	TEST_ASSERT_EQUAL_UINT16(9, node->mean);	
+	TEST_ASSERT_EQUAL_UINT16(1, node->right->mean);
+	TEST_ASSERT_NULL(node->right->left);
+	TEST_ASSERT_NULL(node->right->right);
+	node = node->left;
+	TEST_ASSERT_EQUAL_UINT16(1, node->mean);
+	TEST_ASSERT_EQUAL_UINT16(8, node->right->mean);
+	TEST_ASSERT_NULL(node->right->left);
+	TEST_ASSERT_NULL(node->right->right);
+	node = node->left;
+	TEST_ASSERT_EQUAL_UINT16(8, node->mean);
+	TEST_ASSERT_EQUAL_UINT16(0, node->right->mean);
+	TEST_ASSERT_EQUAL_UINT16(0, node->left->mean);
+	TEST_ASSERT_NULL(node->right->left);
+	TEST_ASSERT_NULL(node->right->right);
+	TEST_ASSERT_NULL(node->left->left);
+	TEST_ASSERT_NULL(node->left->right);	
+}
+
+// Проверка распределения элементов в дереве
+void test_CreateKDTree_CorrectValue()
+{
+	// 2 точки задают внешний куб
+	// другие 3 расположены в одном подкубе
+	// одна из них расположена между двумя и должна исчезнуть
+	MiniStats stats[5] = 
+	{
+		22,  8, 17,  // должна исчезнуть
+		25, 25, 25,  // задает внешний куб
+		21,  9, 16,  // задает внутреннее пространство
+		 5,  5,  5,  // задает внешний куб
+		24,  6, 19   // задает внутреннее пространство
+	};
+	// Размещение в памяти
+	WorkingMemory *wm = create_memory(5, sizeof(MiniStats));
+	for (int i = 0; i < 5; i++)
+		add_to_memory(wm, (char *)&(stats[i]));
+	// Создание дерева
+	KDTree *tree = create_kdtree(wm, 5);
+	// Запись данных листов в память
+	save_kdtree_to_memory(wm, tree);
+	// Проверка размера
+	TEST_ASSERT_EQUAL_UINT8(4, wm->count);
+	// Сравнение
+	MiniStats expected[4] = {
+		 5,  5,  5,
+		21,  6, 16,
+		24,  9, 19,
+		25, 25, 25
+	};
+	char *m = wm->memory;
+	for (int i = 0; i < wm->count; i++)
+	{
+		TEST_ASSERT_EQUAL_MEMORY(&expected[i], m, wm->size);
+		m += wm->size;
+	}
+	free_kdnode(tree->root);
+	free(tree);
+	free_memory(wm);
+}
+
+// Проверка корректности структуры после сжатия
+void test_CompressKDTree_CorrectStructure()
+{
+	MiniStats stats[6] = 
+	{
+		22,  8, 17,
+		25, 25, 25,
+		21,  9, 16, // В разных областях,
+		21, 11, 16,	// но близкие друг к другу
+		 5,  5,  5,
+		24,  6, 19
+	};
+	// Размещение в памяти
+	WorkingMemory *wm = create_memory(6, sizeof(MiniStats));
+	for (int i = 0; i < 6; i++)
+		add_to_memory(wm, (char *)&(stats[i]));
+	// Создание дерева
+	KDTree *tree = create_kdtree(wm, 5);
+	// Сжатие дерева
+	compress_kdtree(tree);
+	// Запись данных листов в память
+	save_kdtree_to_memory(wm, tree);
+	// Проверка размера
+	TEST_ASSERT_EQUAL_UINT8(4, wm->count);
+	// Сравнение
+	MiniStats expected[4] = {
+		 5,  5,  5,
+		21,  6, 16,
+		24, 11, 19,
+		25, 25, 25
+	};
+	char *m = wm->memory;
+	for (int i = 0; i < wm->count; i++)
+	{
+		TEST_ASSERT_EQUAL_MEMORY(&expected[i], m, wm->size);
+		m += wm->size;
+	}
+	free_kdnode(tree->root);
+	free(tree);
+	free_memory(wm);
+}
+
 void setUp()
 {
 	pat_length = 5;
 	pat_shift = 3;
 	affinity = 3;
 	pat_db = create_memory(5, pat_length);
+	det_db = create_memory(5, pat_length);
 }
 
 void tearDown()
@@ -97,6 +236,10 @@ int main()
 	RUN_TEST(test_BreakIntoPatterns_should_Add);
 	RUN_TEST(test_BreakIntoPatterns_should_NoRepeat);
 	RUN_TEST(test_BreakIntoPatterns_should_Replace);
-	RUN_TEST(test_HammingDistance_should_CorrectValue);	
+	RUN_TEST(test_HammingDistance_should_Correctmean);
+	RUN_TEST(test_GetHRect_should_Correctmeans);
+	RUN_TEST(test_CreateKDNode_CorrectStructure);
+	RUN_TEST(test_CreateKDTree_CorrectValue);
+	RUN_TEST(test_CompressKDTree_CorrectStructure);
 	return UNITY_END();
 }
