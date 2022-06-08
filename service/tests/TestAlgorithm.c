@@ -13,6 +13,8 @@
 extern uint8_t pat_length, pat_shift, affinity;
 extern WorkingMemory *pat_db;
 extern WorkingMemory *det_db;
+extern WorkingMemory *stat_db;
+extern Bool msg_log_enabled;
 
 // Проверка на добавление шаблона в базу
 void test_BreakIntoPatterns_should_Add()
@@ -163,12 +165,7 @@ void test_CreateKDTree_CorrectValue()
 		24,  9, 19,
 		25, 25, 25
 	};
-	char *m = wm->memory;
-	for (int i = 0; i < wm->count; i++)
-	{
-		TEST_ASSERT_EQUAL_MEMORY(&expected[i], m, wm->size);
-		m += wm->size;
-	}
+	TEST_ASSERT_EQUAL_UINT16_ARRAY(&expected, wm->memory, 12);
 	free_kdnode(tree->root);
 	free(tree);
 	free_memory(wm);
@@ -205,15 +202,52 @@ void test_CompressKDTree_CorrectStructure()
 		24, 11, 19,
 		25, 25, 25
 	};
-	char *m = wm->memory;
-	for (int i = 0; i < wm->count; i++)
-	{
-		TEST_ASSERT_EQUAL_MEMORY(&expected[i], m, wm->size);
-		m += wm->size;
-	}
+	TEST_ASSERT_EQUAL_UINT16_ARRAY(&expected, wm->memory, 12);
 	free_kdnode(tree->root);
 	free(tree);
 	free_memory(wm);
+}
+
+// Проверка сохранности данных при упаковке и распаковке
+void test_PackAndUnpackDetectors_DataIntegrity()
+{
+	// Подготовка данных
+	TimeData td;
+	td.days = 123;
+	td.hours = 4;
+	td.minutes = 5;
+	MiniStats stats[5] = 
+	{
+		22,  8, 17,
+		25, 25, 25,
+		21,  9, 16,
+		 5,  5,  5,
+		24,  6, 19
+	};
+	// Размещение в памяти
+	for (int i = 0; i < 5; i++)
+		add_to_memory(stat_db, (char *)&(stats[i]));
+	for (int i = 0; i < 3; i++)
+		add_to_memory(det_db, "12345");
+	// Упаковка данных
+	const char *data = pack_detectors(&td);
+	// Очистка памяти
+	ZeroMemory(stat_db->memory, stat_db->max_count * stat_db->size);
+	ZeroMemory(det_db->memory, det_db->max_count * det_db->size);
+	// Распаковка данных
+	unpack_detectors(data);
+	// Сравнение данных
+	TEST_ASSERT_EQUAL_UINT32(5, stat_db->count);
+	TEST_ASSERT_EQUAL_UINT32(3, det_db->count);
+	TEST_ASSERT_EQUAL_UINT8(sizeof(MiniStats), stat_db->size);
+	TEST_ASSERT_EQUAL_UINT8(pat_length, det_db->size);
+	TEST_ASSERT_EQUAL_UINT16_ARRAY(&stats, stat_db->memory, 15);
+	char *p = det_db->memory;
+	for (int i = 0; i < 3; i++)
+	{
+		TEST_ASSERT_EQUAL_STRING_LEN("12345", p, det_db->size);
+		p += det_db->size;
+	}
 }
 
 void setUp()
@@ -221,13 +255,17 @@ void setUp()
 	pat_length = 5;
 	pat_shift = 3;
 	affinity = 3;
+	msg_log_enabled = 0;
 	pat_db = create_memory(5, pat_length);
 	det_db = create_memory(5, pat_length);
+	stat_db = create_memory(5, sizeof(MiniStats));
 }
 
 void tearDown()
 {
 	free_memory(pat_db);
+	free_memory(det_db);
+	free_memory(stat_db);
 }
 
 int main()
@@ -241,5 +279,6 @@ int main()
 	RUN_TEST(test_CreateKDNode_CorrectStructure);
 	RUN_TEST(test_CreateKDTree_CorrectValue);
 	RUN_TEST(test_CompressKDTree_CorrectStructure);
+	RUN_TEST(test_PackAndUnpackDetectors_DataIntegrity);
 	return UNITY_END();
 }

@@ -93,8 +93,15 @@ void log_stats(const char *format, ...);
 @brief Сохранение базы детекторов
 @param td Время затраченное на обучение
 @param buff Данные для записи в файл
+@param size Размер данных
 */
-void save_detectors(TimeData *td, const char *buff);
+void save_detectors(TimeData *td, const char *buff, size_t size);
+
+/**
+@brief Загрузка базы детекторов
+@return Содержимое базы 
+*/
+char *load_detectors();
 
 /**
 @brief Прибавляет минут к счётчик времени обучения

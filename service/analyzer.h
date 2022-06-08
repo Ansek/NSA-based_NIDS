@@ -14,6 +14,7 @@
 #define PACKAGE_DATA_SIZE sizeof(void *) * 2  // Размер PackageData без буфера 
 #define PACKAGE_BUFFER_SIZE            65535  // Размер буфера пакета
 #define PARAM_NBSTATISTICS_COUNT 12 // Количество параметров статистики
+// Флаги TCP
 #define NUL_FTCP 0x00  // Нет флагов
 #define FIN_FTCP 0x01  // Завершение соединение
 #define SYN_FTCP 0x02  // Запрос соединения
@@ -21,6 +22,10 @@
 #define PSH_FTCP 0x08  // Срочная передача пакета
 #define ACK_FTCP 0x10  // Есть номер подтверждения
 #define URG_FTCP 0x20  // Есть указатель важности
+// Режим работы анализаторов
+#define WMODE_PASS 0x00  // Пассивный
+#define WMODE_STUD 0x01  // Обучение
+#define WMODE_MON  0x02  // Мониторинг
 
 // Заголовок IP-пакета
 typedef struct IPHeader

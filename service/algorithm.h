@@ -63,8 +63,9 @@ typedef struct KDTree
 
 /**
 @brief Инициализирует параметры алгоритма
+@brief stud_time Для записи времени обучения
 */
-void init_algorithm();
+void init_algorithm(TimeData *stud_time);
 
 /**
 @brief Освобождение ресурсов
@@ -123,6 +124,13 @@ void break_into_patterns(const char *buf, uint32_t len);
 @return Чем выше значение, тем сильнее строки отличаются. Max == pat_length
 */
 uint8_t hamming_distance(const char *s1, const char *s2);
+
+/**
+@brief Записывает в det_db случайную строку,
+@brief которая не похожа на строки из pat_db
+@return TRUE - удалось сгенерировать детектор
+*/
+Bool generate_detector();
 
 /**
 @brief Получает краевые значения гиперпрямоугольника
@@ -190,5 +198,20 @@ void compress_kdtree(KDTree *tree);
 @return Указатель на статистику
 */
 NBStats *get_statistics();
+
+/**
+@brief Запаковыет данные детекторов для сохранения в файл
+@param td Время, затраченное на обучение детекторов
+@param size Размер сформированных данных
+@return Данные для записи
+*/
+const char *pack_detectors(TimeData *td, size_t *size);
+
+/**
+@brief Распаковывает данные о детекторах
+@param data Данные для чтения
+@param data Для получение данных о времени обучения
+*/
+void unpack_detectors(const char *data, TimeData *stud_time);
 
 #endif

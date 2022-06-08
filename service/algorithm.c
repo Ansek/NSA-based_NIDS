@@ -11,11 +11,15 @@
 WorkingMemory *det_db  = NULL;   // Набор детекторов для анализа пакета
 WorkingMemory *pat_db  = NULL;   // Набор шаблонов нормальной активности 
 WorkingMemory *stat_db = NULL;   // Набор шаблонов для анализа поведения сети
-
+KDTree *stat_tree = NULL; // Дерево для фильтрации ненужных статистик
+char * det_temp;  // Временное хранилище для детектора
+uint32_t xs[4];   // Массив для реализации алгоритма 
+	
 // Параметры из файла конфигурации
 uint8_t pat_length    = 6;  // Длина шаблона пакета
 uint8_t pat_shift     = 1;  // Шаг сдвига шаблона пакета
 uint8_t affinity      = 4;  // Если равно и выше, то строки различны
+uint16_t tree_depth   = 5;  // Максимальная глубина дерева 
 
 /**
 @brief Генерирует число с помощью операций XOR и логического сдвига
@@ -49,12 +53,6 @@ void replace_pattern(const char *pat);
 Bool replace_detector(char *det);
 
 /**
-@brief Записывает в det_db случайную строку,
-@brief которая не похожа на строки из pat_db
-*/
-void generate_detector();
-
-/**
 @brief Добавляет векторы из памяти в k-мерное дерево
 @param tree K-мерное дерево
 @param wm Считываемая память
@@ -83,7 +81,7 @@ VectorType *compress_kdnode(KDNode *node, uint8_t k);
 */
 void commit_and_reset_statistics();
 
-void init_algorithm()
+void init_algorithm(TimeData *stud_time)
 {
 	uint32_t max_dd_count = 0;  // Кол-во детекторов для анализа пакета
 	uint32_t max_pd_count = 0;  // Кол-во шаблонов нормальной активности 
@@ -105,6 +103,8 @@ void init_algorithm()
 			pat_shift = read_setting_u();
 		else if (strcmp(name, "affinity") == 0)
 			affinity = read_setting_u();
+		else if (strcmp(name, "tree_depth") == 0)		
+			tree_depth = read_setting_u();
 		else
 			print_not_used(name);
 	}
@@ -113,6 +113,21 @@ void init_algorithm()
 	pat_db  = create_memory(max_pd_count, pat_length);
 	stat_db = create_memory(max_sd_count, sizeof(NBStats));
 	ZeroMemory(stat_db->memory, stat_db->max_count * sizeof(NBStats));
+	det_temp = (char *)malloc(pat_length);
+	
+	char *data = load_detectors();
+	if (data != NULL)
+	{
+		unpack_detectors(data, stud_time);
+		free(data);
+	}
+	
+	// Инициализация параметра для генерации случайных значений
+	srand(time(NULL));
+	xs[0] = rand();
+	xs[1] = rand();
+	xs[2] = rand();
+	xs[3] = rand();
 }
 
 void free_algorithm()
@@ -120,6 +135,7 @@ void free_algorithm()
 	free_memory(det_db);
 	free_memory(pat_db);
 	free_memory(stat_db);
+	free(det_temp);
 }
 
 WorkingMemory *create_memory(uint32_t max_count, uint8_t size)
@@ -130,12 +146,15 @@ WorkingMemory *create_memory(uint32_t max_count, uint8_t size)
 	wm->memory = (uint8_t *)malloc(max_count * size);
 	wm->mutex = CreateMutex(NULL, FALSE, NULL); 
 	reset_memory(wm);
+	return wm;
 }
 
 void reset_memory(WorkingMemory *wm)
 {
+	WaitForSingleObject(wm->mutex, INFINITE);
 	wm->count = 0;
 	wm->cursor = wm->memory;
+	ReleaseMutex(wm->mutex);
 }
 
 void free_memory(WorkingMemory *wm)
@@ -207,6 +226,19 @@ uint8_t hamming_distance(const char *s1, const char *s2)
 		if (s1[i] != s2[i])
 			d++;
 	return d;
+}
+
+Bool generate_detector()
+{
+	// Если место имеется
+	if (det_db->count < det_db->max_count)
+	{
+		// Добавление, если есть место и детектор уникален
+		if (det_db->count < det_db->max_count && replace_detector(det_temp))
+			add_to_memory(det_db, det_temp);
+		return TRUE;
+	}
+	return FALSE;
 }
 
 VectorType *get_hrect(const VectorType *vecs, uint32_t len, uint8_t k)
@@ -426,13 +458,13 @@ NBStats *get_statistics()
 
 uint32_t xorshift128()
 {
-	// Инициализация любыми значениями
-	static uint32_t x = 1795, y = 12345, z = 9876, w = 1243;
 	// Реализация генерации
-	uint32_t t = x^(x << 11);
-	x = y; y = z; z = w;
-	w = (w^(w >> 19))^(t^(t >> 8));
-	return w;
+	uint32_t t = xs[0]^(xs[0] << 11);
+	xs[0] = xs[1];
+	xs[1] = xs[2];
+	xs[2] = xs[3];
+	xs[3] = (xs[3]^(xs[3] >> 19))^(t^(t >> 8));
+	return xs[3];
 }
 
 void parse_pattern(const char *pat)
@@ -500,66 +532,38 @@ void replace_pattern(const char *pat)
 	}
 	// Произведение замены
 	if (!write_to_memory(pat_db, max_p, pat))
-		print_errlog("Failed to replace pattern!");
+	{
+		// Если не удалось произвести замену,
+		// то сбрасываем базу паттернов
+		reset_memory(pat_db);
+		print_msglog("Reset the pattern database!");
+	}
 }
 
 Bool replace_detector(char *det)
 {
-	char *temp = det;
+	Bool is_similar;
 	uint8_t attempt = 0;
 	do
 	{
-		uint8_t i = 0;
-		det = temp;
 		// Заполнение детектора случайными значениями
-		for (; i < pat_length; i += sizeof(uint32_t))
-		{
-			uint32_t xs128 = xorshift128();
-			memcpy(det, &xs128, sizeof(uint32_t));
-			det += sizeof(uint32_t);
-		}
-		if (i < pat_length)
-		{
-			i = pat_length - i;
-			uint32_t xs128 = xorshift128();
-			memcpy(det, &xs128, i);
-			det += i;
-		}
-		// Приведение числа к диапазону при 70%
-		for (i = 0; i < pat_length; i++)
-		{
-			uint8_t p = time(NULL);
-			if (p < 0.7 * UINT8_MAX)
-				det[i] = det[i] % 94 + 32;
-		}
+		for (uint8_t i = 0; i < pat_length; i++)
+			det[i] = xorshift128() % 95 + 32;
 		// Проверка, что детектор не похож на шаблоны нормального поведения
+		is_similar = FALSE;
 		char *pat = pat_db->memory;
 		for (uint32_t j = 0; j < pat_db->count; j++)
 			if (hamming_distance(det, pat) < affinity)
 			{
-				temp = NULL;
+				is_similar = TRUE;
 				break;				
 			}
 			else
 				pat += pat_length;
 		attempt++;
 	}
-	while(det != NULL && attempt < UINT8_MAX);
-	return det != NULL;
-}
-
-void generate_detector()
-{
-	// Если место имеется
-	if (det_db->count < det_db->max_count)
-	{
-		// Временное хранилище для детектора
-		char *det = (char *)malloc(pat_length);
-		// Добавление, если есть место и детектор уникален
-		if (det_db->count < det_db->max_count && replace_detector(det))
-			add_to_memory(det_db, det);
-		free(det);
-	}
+	while(is_similar && attempt < UINT8_MAX);
+	return !is_similar;
 }
 
 void add_from_memore(KDTree *tree, const WorkingMemory *wm)
@@ -657,6 +661,80 @@ VectorType *compress_kdnode(KDNode *node, uint8_t k)
 void commit_and_reset_statistics()
 {
 	print_msglog("Memory has been reset");
+	if (stat_tree = NULL)
+	{
+		stat_tree = create_kdtree(stat_db, tree_depth);
+		reset_memory(stat_db);
+	}
+	else
+		move_memory_to_kdtree(stat_tree, stat_db);	
 	ZeroMemory(stat_db->memory, stat_db->max_count * sizeof(NBStats));
+}
+
+const char *pack_detectors(TimeData *td, size_t *size)
+{
+	// Вывод информации
+	print_msglog("Save detector");
+	print_msglogf("Studying time: %u d. %u h. %u m.\n",
+		td->days, td->hours, td->minutes);
+	print_msglogf("Number of behavior detectors: %u\n", stat_db->count);
+	print_msglogf("Number of packet content detectors: %u\n", det_db->count);
+	print_msglogf("Packet content detectors: %u\n", pat_length);
+	// Упаковка данных
+	size_t stat_db_size = stat_db->count * stat_db->size;
+	size_t det_db_size = det_db->count * det_db->size;
+	*size = sizeof(TimeData) + 2 * 4 + 2 + stat_db_size + det_db_size;
+	char *data = (char *)malloc(*size);
+	char *p = data;
+	memcpy(data, td, sizeof(TimeData));
+	p += sizeof(TimeData);
+	*((uint32_t *)p) = stat_db->count;
+	p += sizeof(uint32_t);
+	*((uint32_t *)p) = det_db->count;
+	p += sizeof(uint32_t);
+	*(p) = stat_db->size;
+	p += sizeof(uint8_t);
+	*(p) = det_db->size;
+	p += sizeof(uint8_t);	
+	memcpy(p, stat_db->memory, stat_db_size);	
+	p += stat_db_size;
+	memcpy(p, det_db->memory, det_db_size);	
+	return data;
+}
+
+void unpack_detectors(const char* data, TimeData *stud_time)
+{
+	// Распаковка данных
+	uint32_t stat_count, det_count;
+	uint8_t stat_size, det_size;
+	print_msglog("Load detector");
+	*stud_time = *((TimeData *)data);
+	data += sizeof(TimeData);
+	stat_count = *((uint32_t *)data);
+	data += sizeof(uint32_t);
+	det_count = *((uint32_t *)data);
+	data += sizeof(uint32_t);
+	stat_size = *data;
+	data += sizeof(uint8_t);
+	det_size = *data;
+	data += sizeof(uint8_t);
+	// Вывод информации	
+	print_msglogf("Studying time: %u d. %u h. %u m.\n",
+		stud_time->days, stud_time->hours, stud_time->minutes);
+	print_msglogf("Number of behavior detectors: %u\n", stat_count);
+	print_msglogf("Number of packet content detectors: %u\n", det_count);
+	print_msglogf("Packet content detectors: %u\n", det_size);
+	// Добавление детекторов	
 	reset_memory(stat_db);
+	for (uint32_t i = 0; i < stat_count; i++)
+	{
+		add_to_memory(stat_db, data);
+		data += stat_db->size;
+	}
+	reset_memory(det_db);
+	for (uint32_t i = 0; i < det_count; i++)
+	{
+		add_to_memory(det_db, data);
+		data += det_db->size;
+	}
 }

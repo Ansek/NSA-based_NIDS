@@ -20,10 +20,13 @@ uint16_t alist_count; // Количество анализаторов в спи
 HANDLE list_mutex;    // Мьютекс для работы со списком
 HANDLE lock_mutex;    // Мьютекс для контроля блокировок
 HANDLE stat_mutex;    // Мьютекс для работы со статистикой
+TimeData stud_time;   // Для хранения времени обучения
 
 // Параметры из файла конфигурации
+uint8_t  work_mode;   // Режим работы анализаторов 
 uint16_t max_alist_count;    // Максимальное количество анализаторов
 uint16_t stat_col_period;    // Период сбора статистики в секундах
+uint16_t det_gen_period;     // Период генерации детектора в секундах
 size_t analyzer_buffer_size; // Максимальный размер буфера анализатора
 
 /**
@@ -62,6 +65,12 @@ void analyze_icmp(PackageData *pd);
 @param pd - Данные пакета
 */
 void analyze_ip(PackageData *pd);
+
+/**
+@brief Проверяет содержимое пакета
+@param info Информация о пакете
+*/
+void analyze_data(PackageInfo *info);
 
 /**
 @brief Разбор нужных элементов IP заголовка
@@ -107,6 +116,11 @@ DWORD WINAPI an_thread(LPVOID ptr);
 DWORD WINAPI sd_thread(LPVOID ptr);
 
 /**
+@brief Поток для периодичной генерации детекторов
+*/
+DWORD WINAPI gd_thread(LPVOID ptr);
+
+/**
 @brief Поток для фиксации данных статистики
 */
 DWORD WINAPI stats_thread(LPVOID ptr);
@@ -125,7 +139,9 @@ void run_analyzer(PList *tcp_ps, PList *udp_ps)
 	while (is_reading_settings_section("Analyzer"))
 	{
 		const char *name = read_setting_name();
-		if (strcmp(name, "min_analyzer_count") == 0)
+		if (strcmp(name, "work_mode") == 0)
+			work_mode = read_setting_u();
+		else if (strcmp(name, "min_analyzer_count") == 0)
 			min_alist_count = read_setting_u();
 		else if (strcmp(name, "max_analyzer_count") == 0)
 			max_alist_count = read_setting_u();
@@ -135,14 +151,16 @@ void run_analyzer(PList *tcp_ps, PList *udp_ps)
 		else if (strcmp(name, "detector_save_periods") == 0)
 			while (is_reading_setting_value())
 				add_in_plist(min_det_save, read_setting_u());
-		else if (strcmp(name, "stat_col_period") == 0)
+		else if (strcmp(name, "statistics_collection_period") == 0)
 			stat_col_period = read_setting_u();
+		else if (strcmp(name, "detector_generation_period") == 0)		
+			det_gen_period = read_setting_u();
 		else
 			print_not_used(name);
 	}
 
 	// Инициализация параметров алгоритм отрицательного отбора
-	init_algorithm();
+	init_algorithm(&stud_time);
 	stats = get_statistics();
 
 	// Создание потока для сохранения детекторов
@@ -154,11 +172,19 @@ void run_analyzer(PList *tcp_ps, PList *udp_ps)
 	}
 
 	// Создание потока для сохранения статистики
-	hThread = CreateThread(NULL, 0, stats_thread, NULL, 0, NULL);
+	hThread = CreateThread(NULL, 0, gd_thread, NULL, 0, NULL);
 	if (hThread == NULL)
 	{
 		print_msglog("Thread to save statistics not created!");
 		exit(7);
+	}
+	
+	// Создание потока для генерации детекторов
+	hThread = CreateThread(NULL, 0, stats_thread, NULL, 0, NULL);
+	if (hThread == NULL)
+	{
+		print_msglog("Thread to save statistics not created!");
+		exit(8);
 	}
 	
 	// Создание требуемого количества анализаторов
@@ -365,6 +391,8 @@ void analyze_tcp(PackageData *pd)
 			flags[i] = '_';
 	// Переход к данным
 	info.data += info.shift;
+	// Анализ содержимого пакета
+	analyze_data(&info);
 	// Вывод в файл
 	log_package(&info, get_format(TCP),
 		info.time_buff, flags,
@@ -395,9 +423,11 @@ void analyze_udp(PackageData *pd)
 			stats->un_udp_port_count++;
 	}	
 	is_stats_changed = TRUE;
-	ReleaseMutex(stat_mutex);	
+	ReleaseMutex(stat_mutex);
 	// Переход к данным
 	info.data += info.shift;
+	// Анализ содержимого пакета
+	analyze_data(&info);
 	// Вывод в файл
 	log_package(&info, get_format(UDP), info.time_buff,
 		info.src_buff, ntohs(udp->src_port),
@@ -418,7 +448,9 @@ void analyze_icmp(PackageData *pd)
 	is_stats_changed = TRUE;
 	ReleaseMutex(stat_mutex);	
 	// Переход к данным
-	info.data  += info.shift;
+	info.data += info.shift;
+	// Анализ содержимого пакета
+	analyze_data(&info);
 	// Вывод в файл
 	log_package(&info, get_format(ICMP),
 		info.time_buff, icmp->type, icmp->code,
@@ -435,10 +467,21 @@ void analyze_ip(PackageData *pd)
 	stats->ip_count++;
 	is_stats_changed = TRUE;
 	ReleaseMutex(stat_mutex);
+	// Переход к данным
+	info.data += info.shift;
+	// Анализ содержимого пакета
+	analyze_data(&info);
 	// Вывод в файл
 	log_package(&info, get_format(IP),
 		info.time_buff, get_protocol_name(pd->header.protocol),
 		info.src_buff, info.dst_buff, info.size);
+}
+
+void analyze_data(PackageInfo *info)
+{
+	uint16_t len = info->size - info->shift;
+	if (len > 0)
+		break_into_patterns(info->data, len);
 }
 
 PackageInfo get_ip_info(PackageData *pd)
@@ -552,19 +595,22 @@ DWORD WINAPI an_thread(LPVOID ptr)
 	print_msglogf("Analyzer #%u launched\n", data->id);
 	while (TRUE)
 	{
-		if (data->pack_count)
+		if (data->pack_count && work_mode > 0)
 		{
 			data->read = TRUE;
 			PackageData *pd = data->r_package;
 			// Определение типа протокола для уточнения анализа
-			if (pd->header.protocol == IPPROTO_TCP)
-				analyze_tcp(pd);
-			else if (pd->header.protocol == IPPROTO_UDP)
-				analyze_udp(pd);
-			else if (pd->header.protocol == IPPROTO_ICMP)
-				analyze_icmp(pd);
-			else
-				analyze_ip(pd);
+			if (work_mode == WMODE_STUD)
+			{
+				if (pd->header.protocol == IPPROTO_TCP)
+					analyze_tcp(pd);
+				else if (pd->header.protocol == IPPROTO_UDP)
+					analyze_udp(pd);
+				else if (pd->header.protocol == IPPROTO_ICMP)
+					analyze_icmp(pd);
+				else
+					analyze_ip(pd);
+			}
 			// Отмечаем, что пакет проверен
 			pd->adapter = NULL; 
 			data->r_package = pd->next;
@@ -578,23 +624,23 @@ DWORD WINAPI an_thread(LPVOID ptr)
 
 DWORD WINAPI sd_thread(LPVOID ptr)
 {
-	TimeData td;
-	td.days = 0;
-	td.hours = 0;
-	td.minutes = 0;
-	PNode* p = min_det_save->beg;
+	PNode *p = min_det_save->beg;
 	while (p != NULL)
 	{
 		// Засыпание на определенное количество минут
-		Sleep(p->value * 60000); // До 24 дней 
-		add_time(&td, p->value); // Увеличение на минуту
+		Sleep(p->value * 60000); // До 24 дней
+		work_mode = WMODE_PASS;
+		add_time(&stud_time, p->value); // Увеличение на минуту
 		// Сохранение данных
-		save_detectors(&td, "data");
+		size_t size;
+		const char *data = pack_detectors(&stud_time, &size);
+		save_detectors(&stud_time, data, size);
 		// Переход к следующему элементу и освобождение памяти
-		PNode* temp = p;
+		PNode *temp = p;
 		p = p->next;
 		free(temp);
 		temp = NULL;
+		work_mode = WMODE_STUD;
 	}
 }
 
@@ -602,6 +648,7 @@ DWORD WINAPI stats_thread(LPVOID ptr)
 {
 	while (TRUE)
 	{
+		Sleep(stat_col_period * 1000);
 		// Запись текущей статистики в лог
 		if (is_stats_changed)
 		{
@@ -616,13 +663,18 @@ DWORD WINAPI stats_thread(LPVOID ptr)
 				stats->fin_count, stats->rst_count,
 				stats->al_tcp_port_count, stats->un_tcp_port_count,
 				stats->al_udp_port_count, stats->un_udp_port_count);
-			};
-		// Добавление новой статистики, для сохранения предыдущей
-		if (is_stats_changed)
-		{
+			// Добавление новой статистики, для сохранения предыдущей
 			stats = get_statistics();
 			is_stats_changed = FALSE;
 		}
-		Sleep(stat_col_period * 1000);
 	}
+}
+
+DWORD WINAPI gd_thread(LPVOID ptr)
+{
+	do
+	{
+		Sleep(det_gen_period * 1000);
+	}
+	while (generate_detector());
 }

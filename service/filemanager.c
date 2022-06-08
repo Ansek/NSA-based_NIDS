@@ -19,8 +19,9 @@ Bool err_log_enabled = 1;  // Флаг вывода ошибок пользов�
 
 // Параметры из файла конфигурации
 short time_sleep;  // Время перерыва между сохранениями данных
-const char *db_detectors_dirname = "DB//"; // Путь к файлам детекторов
 const char *adapter_log_dirname = "LOG//"; // Каталог для хранения логов адаптера
+const char *db_detectors_dirname = "DB//"; // Путь к файлам детекторов
+const char *db_detectors_file = "detectors.db"; // Файл для загрузки детекторов
 
 // Шаблон для вывода информации о TCP
 const char *tcp_log_format = "\
@@ -64,10 +65,12 @@ void run_filemanager()
 	while (is_reading_settings_section("FileManager"))
 	{
 		const char *name = read_setting_name();
-		if (strcmp(name, "db_detectors_dirname") == 0)
-			db_detectors_dirname = read_setting_s();
-		else if (strcmp(name, "adapter_log_dirname") == 0)
+		if (strcmp(name, "adapter_log_dirname") == 0)
 			adapter_log_dirname = read_setting_s();
+		else if (strcmp(name, "db_detectors_dirname") == 0)
+			db_detectors_dirname = read_setting_s();
+		else if (strcmp(name, "db_detectors_file") == 0)
+			db_detectors_file = read_setting_s();
 		else if (strcmp(name, "time_sleep") == 0)
 			time_sleep = read_setting_u();
 		else
@@ -145,7 +148,7 @@ void log_stats(const char *format, ...)
 	ReleaseMutex(stats_mutex);
 }
 
-void save_detectors(TimeData *td, const char *buff)
+void save_detectors(TimeData *td, const char *buff, size_t size)
 {
 	// Формирование имени файлов логов
 	char filename[FILE_NAME_SIZE];
@@ -153,8 +156,29 @@ void save_detectors(TimeData *td, const char *buff)
 		db_detectors_dirname, td->days, td->hours, td->minutes);
 	// Сохранение файла
 	FILE *f = create_file(filename);
-	fputs(buff, f);
+	fwrite(buff, size, 1, f);
 	fclose(f);
+}
+
+char *load_detectors()
+{
+	char *buf = NULL;
+	char filename[FILE_NAME_SIZE];
+	sprintf(filename, "%s%s", db_detectors_dirname, db_detectors_file);
+	FILE *file = fopen(filename, "r");
+	if (file != NULL)
+	{
+		fseek(file, 0, SEEK_END);
+		long size = ftell(file);
+		fseek(file, 0, SEEK_SET);
+		if (size > 0)
+		{
+			buf = (char *)malloc(size);
+			fread(buf, size, 1, file);
+			fclose(file);
+		}
+	}
+	return buf;
 }
 
 void add_time(TimeData *td, uint32_t minutes)
