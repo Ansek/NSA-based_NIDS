@@ -45,7 +45,6 @@ typedef struct NBStats
 typedef struct KDNode
 {
 	VectorType mean;   // Среднее значение i-мерности узла
-	//uint32_t count;  // Количество векторов в дерева
 	uint8_t i;       // Мерность данного значения
 	Bool is_leaf;    // Флаг, что узел является листом
 	struct KDNode *left;  // Указатель на левый узел дерева (<= mean)

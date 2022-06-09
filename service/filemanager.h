@@ -45,7 +45,7 @@ typedef struct PackageInfo
 // Для фиксирования времени обучения
 typedef struct TimeData
 {
-	size_t days;      // Дни
+	uint32_t days;    // Дни
 	uint8_t hours;    // Часы
 	uint8_t minutes;  // Минуты
 } TimeData;

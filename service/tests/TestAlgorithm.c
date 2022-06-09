@@ -230,18 +230,28 @@ void test_PackAndUnpackDetectors_DataIntegrity()
 	for (int i = 0; i < 3; i++)
 		add_to_memory(det_db, "12345");
 	// Упаковка данных
-	const char *data = pack_detectors(&td);
+	size_t size;
+	const char *data = pack_detectors(&td, &size);
 	// Очистка памяти
 	ZeroMemory(stat_db->memory, stat_db->max_count * stat_db->size);
 	ZeroMemory(det_db->memory, det_db->max_count * det_db->size);
 	// Распаковка данных
-	unpack_detectors(data);
+	TimeData td2;
+	unpack_detectors(data, &td2);
 	// Сравнение данных
+	MiniStats expected[4] = {
+		 5,  5,  5,
+		21,  6, 16,
+		24,  9, 19,
+		25, 25, 25
+	};
+	TEST_ASSERT_EQUAL_MEMORY(&td, &td2, sizeof(TimeData));
+	TEST_ASSERT_EQUAL_UINT32(63, size);
 	TEST_ASSERT_EQUAL_UINT32(5, stat_db->count);
 	TEST_ASSERT_EQUAL_UINT32(3, det_db->count);
 	TEST_ASSERT_EQUAL_UINT8(sizeof(MiniStats), stat_db->size);
 	TEST_ASSERT_EQUAL_UINT8(pat_length, det_db->size);
-	TEST_ASSERT_EQUAL_UINT16_ARRAY(&stats, stat_db->memory, 15);
+	TEST_ASSERT_EQUAL_UINT16_ARRAY(&expected, stat_db->memory, 12);
 	char *p = det_db->memory;
 	for (int i = 0; i < 3; i++)
 	{

@@ -91,11 +91,11 @@ void init_algorithm(TimeData *stud_time)
 	while (is_reading_settings_section("Algorithm"))
 	{
 		const char *name = read_setting_name();
-		if (strcmp(name, "detector_count") == 0)
+		if (strcmp(name, "max_detector_count") == 0)
 			max_dd_count = read_setting_u();
-		else if (strcmp(name, "pattern_count") == 0)
+		else if (strcmp(name, "max_pattern_count") == 0)
 			max_pd_count = read_setting_u();
-		else if (strcmp(name, "statistic_count") == 0)
+		else if (strcmp(name, "max_statistic_count") == 0)
 			max_sd_count = read_setting_u();
 		else if (strcmp(name, "pattern_length") == 0)
 			pat_length = read_setting_u();
@@ -259,58 +259,58 @@ VectorType *get_hrect(const VectorType *vecs, uint32_t len, uint8_t k)
 			if (p[i] > max_hrect[i])
 				max_hrect[i] = p[i];
 			p += k;
-		}		
+		}
 	}	
 	return min_hrect;
 }
 
 KDNode *create_kdnode(VectorType *hrect, uint8_t i, uint8_t k, uint32_t depth)
 {
-	// Заполнение нового узла
-	KDNode *node = (KDNode *)malloc(sizeof(KDNode));
-	// Определение возможности разделить пространство пополам
-	VectorType min, max;
-	uint8_t save = i;
-	do 
+	uint8_t j, save = i;
+	KDNode *node = NULL;
+	do
 	{
-		node->i = i;
-		
-		min = hrect[i];
-		max = hrect[k + i];
+		j = i;
 		i++;
 		if (i == k)
 			i = 0;
-
-		// Если зациклись
-		if (save == i)
+		// Определяем, можно ли разделить данную область
+		if (hrect[j] != hrect[j + k])
 		{
-			return NULL;
+			VectorType min = hrect[j];
+			VectorType max = hrect[j + k];
+			node = (KDNode *)malloc(sizeof(KDNode));
+			node->i = j;
+			node->mean = (min + max) >> 1;  // (a+b)/2
+			if (depth > 0)
+			{
+				depth--;
+				// Построение левой стороны дерева (<= mean)
+				hrect[node->i + k] = node->mean;      // max
+				node->left = create_kdnode(hrect, i, k, depth);
+				hrect[node->i + k] = max;
+				// Построение правой стороны дерева (> mean)
+				hrect[node->i] = node->mean + 1;      // min
+				node->right = create_kdnode(hrect, i, k, depth);
+				hrect[node->i] = min;
+				// Если лишний узёл
+				if (node->left != NULL && node->right == NULL)
+				{
+					free(node->left);
+					node->left = NULL;
+				}
+			}
+			else
+			{
+				node->left = NULL;
+				node->right = NULL;
+			}
+			// Отметка листов (тогда указатели будут хранить min и max значения)
+			node->is_leaf = node->left == NULL && node->right == NULL;
+			break;
 		}
 	}
-	while (max - min == 0); // Переход к другой мерности
-		 
-	// Вычисление среднего значения
-	node->mean = (min + max) >> 1;  // (a+b)/2
-	// Если не достигли нужной глубины
-	if (depth > 0)
-	{
-		depth--;
-		// Построение левой стороны дерева (<= mean)
-		hrect[node->i + k] = node->mean;      // max
-		node->left = create_kdnode(hrect, i, k, depth);
-		hrect[node->i + k] = max;
-		// Построение правой стороны дерева (> mean)
-		hrect[node->i] = node->mean + 1;      // min
-		node->right = create_kdnode(hrect, i, k, depth);
-		hrect[node->i] = min;
-	}
-	else
-	{
-		node->left = NULL;
-		node->right = NULL;
-	}
-	// Отметка листов (тогда указатели будут хранить min и max значения)
-	node->is_leaf = node->left == NULL && node->right == NULL;
+	while (save != i);
 	return node;
 }
 
@@ -352,19 +352,31 @@ void add_in_kdtree(KDTree *tree, const VectorType *vector)
 
 KDTree *create_kdtree(const WorkingMemory *wm, uint32_t depth)
 {
-	KDTree *tree = (KDTree *)malloc(sizeof(KDTree));
-	tree->k = wm->size / sizeof(VectorType);
-	tree->depth = depth;
+	KDTree *tree = NULL;
+	WaitForSingleObject(wm->mutex, INFINITE);
+	uint8_t k = wm->size / sizeof(VectorType);
 	// Получение граничных значений для построения дерева
-	tree->hrect = get_hrect((VectorType *)wm->memory, wm->count, tree->k);
-	tree->root = create_kdnode(tree->hrect, 0, tree->k, depth);
-	// Заполнение информацией о точках
-	add_from_memore(tree, wm);
+	VectorType *hrect = get_hrect((VectorType *)wm->memory, wm->count, k);
+	// Построение узлов
+	KDNode *node = create_kdnode(hrect, 0, k, depth);
+	// Если узлы есть, то сохраняем дерево
+	if (node != NULL)
+	{
+		tree = (KDTree *)malloc(sizeof(KDTree));
+		tree->k = k;
+		tree->depth = depth;
+		tree->hrect = hrect;
+		tree->root = node;
+		// Заполнение информацией о точках
+		add_from_memore(tree, wm);
+	}
+	ReleaseMutex(wm->mutex);
 	return tree;
 }
 
 void move_memory_to_kdtree(KDTree *tree, WorkingMemory *wm)
 {
+	WaitForSingleObject(wm->mutex, INFINITE);
 	// Получение граничных значений для построения дерева
 	VectorType *hrect = get_hrect((VectorType *)wm->memory,wm->count,tree->k);
 	uint16_t i = 0;
@@ -406,31 +418,35 @@ void move_memory_to_kdtree(KDTree *tree, WorkingMemory *wm)
 	{
 		// Просто дополняем
 		add_from_memore(tree, wm);
+		free(hrect);
 	}
+	ReleaseMutex(wm->mutex);
 	reset_memory(wm);
 }
 
 void save_kdtree_to_memory(WorkingMemory *wm, const KDTree *tree)
 {
-	reset_memory(wm);
-	save_kdnode_to_memory(wm, tree->root, tree->k);
+	if (tree != NULL)
+	{
+		reset_memory(wm);
+		save_kdnode_to_memory(wm, tree->root, tree->k);
+	}
 }
 
 void free_kdnode(KDNode *node)
 {
+	if (node == NULL)
+		return;	
 	if (node->is_leaf)
 	{
 		free(node->left);
-		free(node->right);
 		node->left = NULL;
 		node->right = NULL;
 	}
 	else
 	{
-		if (node->left != NULL)
-			free_kdnode(node->left);
-		if (node->right != NULL)
-			free_kdnode(node->right);
+		free_kdnode(node->left);
+		free_kdnode(node->right);
 	}
 	free(node);
 	node = NULL;
@@ -447,7 +463,10 @@ NBStats *get_statistics()
 	WaitForSingleObject(stat_db->mutex, INFINITE);
 	// Если полностью заполнили
 	if (stat_db->count == stat_db->max_count)
+	{
+		print_msglog("Memory has been reset");
 		commit_and_reset_statistics();
+	}
 	// Возврат текущей области
 	res = (NBStats *)stat_db->cursor;
 	stat_db->count++;
@@ -660,14 +679,13 @@ VectorType *compress_kdnode(KDNode *node, uint8_t k)
 
 void commit_and_reset_statistics()
 {
-	print_msglog("Memory has been reset");
-	if (stat_tree = NULL)
+	if (stat_tree == NULL)
 	{
 		stat_tree = create_kdtree(stat_db, tree_depth);
 		reset_memory(stat_db);
 	}
 	else
-		move_memory_to_kdtree(stat_tree, stat_db);	
+		move_memory_to_kdtree(stat_tree, stat_db);
 	ZeroMemory(stat_db->memory, stat_db->max_count * sizeof(NBStats));
 }
 
@@ -695,7 +713,14 @@ const char *pack_detectors(TimeData *td, size_t *size)
 	*(p) = stat_db->size;
 	p += sizeof(uint8_t);
 	*(p) = det_db->size;
-	p += sizeof(uint8_t);	
+	p += sizeof(uint8_t);
+	// Добавление в дерево, для сжатия статистики
+	if (stat_db->count > 1)
+	{
+		commit_and_reset_statistics();
+		save_kdtree_to_memory(stat_db, stat_tree);
+	}
+	// Запись данных детекторов
 	memcpy(p, stat_db->memory, stat_db_size);	
 	p += stat_db_size;
 	memcpy(p, det_db->memory, det_db_size);	
