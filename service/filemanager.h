@@ -16,6 +16,7 @@
 
 #define FILE_NAME_SIZE 256
 #define FID uint8_t
+#define VectorType uint16_t
 
 typedef enum Format 
 {
@@ -41,6 +42,25 @@ typedef struct PackageInfo
 	uint16_t shift;     // Смещение до данных
 	const char *data;   // Указатель на начало данных
 } PackageInfo;
+
+// Содержит информацию об аномальности пакета
+typedef struct PackAnomaly
+{
+	const char *pattern;  // Строка, которая была признана аномальной
+	const char *detector; // На каком детекторе среагирован
+	uint8_t len;          // Длина строк
+} PackAnomaly;
+
+// Содержит информацию об аномальности статистики
+typedef struct StatAnomaly
+{
+	const VectorType *value;  // Какое значение принято аномальным
+	const VectorType *hrect;  // Если точка за пределом гиперпрямоугольника
+	const VectorType *left_range;  // Левый допустимый диапазон
+	const VectorType *right_range; // Правый допустимый диапазон
+	uint8_t i;  // Мерность на котором выявлено значение
+	uint8_t k;  // Максимальное значение мерности
+} StatAnomaly;
 
 // Для фиксирования времени обучения
 typedef struct TimeData
@@ -146,5 +166,18 @@ void print_errlog(const char *text);
 @param text - Текст ошибки
 */
 void print_errlogf(const char *text, ...);
+
+/**
+@brief Оповещает об аномальности пакета
+@param pa Данные о причине оповещения
+@param info Информация о пакете
+*/
+void report_pa(const PackAnomaly *pa, const PackageInfo *info);
+
+/**
+@brief Оповещает об аномальности статистики
+@param sa Данные о причине оповещения
+*/
+void report_sa(const StatAnomaly *sa);
 
 #endif

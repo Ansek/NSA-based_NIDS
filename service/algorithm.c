@@ -81,7 +81,40 @@ VectorType *compress_kdnode(KDNode *node, uint8_t k);
 */
 void commit_and_reset_statistics();
 
-void init_algorithm(TimeData *stud_time)
+/**
+@brief Проверяет шаблон на аномальность
+@param pat шаблон, который проверяется
+@return Сведение об аномалии
+*/
+PackAnomaly *check_pattern(const char* pat);
+
+/**
+@brief Проверяет вектор на аномальность
+@param node узел в котором будет проводится проверка
+@param vector проверяемый вектор
+@param k Мерность пространства
+@return Сведение об аномалии
+*/
+StatAnomaly *check_vector(KDNode *node, const VectorType *vector, uint8_t k);
+
+/**
+@brief Проверяет, попадает ли вектор в заданное k-мерное пространство
+@param hrect гиперпрямоугольник
+@param vector проверяемый вектор
+@param k Мерность пространства
+@return Сведение об аномалии
+*/
+StatAnomaly *compare_hrect(const VectorType *hrect, const VectorType *vector, uint8_t k);
+
+/**
+@brief Пытается найти первый не пустой узел
+@param node узел, в котором ищем
+@param is_left TRUE - начинать с левого поддерева, иначе с правого
+@return Значение k-мерного прямоугольника листа
+*/
+VectorType *find_first_hrect(KDNode *node, Bool is_left);
+
+void init_algorithm(TimeData *stud_time, Bool is_stud)
 {
 	uint32_t max_dd_count = 0;  // Кол-во детекторов для анализа пакета
 	uint32_t max_pd_count = 0;  // Кол-во шаблонов нормальной активности 
@@ -109,10 +142,13 @@ void init_algorithm(TimeData *stud_time)
 			print_not_used(name);
 	}
 	
-	det_db  = create_memory(max_dd_count, pat_length);   
-	pat_db  = create_memory(max_pd_count, pat_length);
+	det_db  = create_memory(max_dd_count, pat_length);
 	stat_db = create_memory(max_sd_count, sizeof(NBStats));
 	ZeroMemory(stat_db->memory, stat_db->max_count * sizeof(NBStats));
+	// Если активен режим обучения
+	if (is_stud)	
+		pat_db  = create_memory(max_pd_count, pat_length);
+	
 	det_temp = (char *)malloc(pat_length);
 	
 	char *data = load_detectors();
@@ -120,6 +156,13 @@ void init_algorithm(TimeData *stud_time)
 	{
 		unpack_detectors(data, stud_time);
 		free(data);
+		// Если рабочий режим, то сжимаем дерево для скорости
+		if (!is_stud)
+		{	
+			stat_tree = create_kdtree(stat_db, tree_depth);
+			compress_kdtree(stat_tree);
+			ZeroMemory(stat_db->memory, sizeof(NBStats));
+		}			
 	}
 	
 	// Инициализация параметра для генерации случайных значений
@@ -475,6 +518,122 @@ NBStats *get_statistics()
 	return res;
 }
 
+const char *pack_detectors(const TimeData *td, size_t *size)
+{
+	// Вывод информации
+	print_msglog("Save detector");
+	print_msglogf("Studying time: %u d. %u h. %u m.\n",
+		td->days, td->hours, td->minutes);
+	print_msglogf("Number of behavior detectors: %u\n", stat_db->count);
+	print_msglogf("Number of packet content detectors: %u\n", det_db->count);
+	print_msglogf("Packet content detectors: %u\n", pat_length);
+	// Упаковка данных
+	size_t stat_db_size = stat_db->count * stat_db->size;
+	size_t det_db_size = det_db->count * det_db->size;
+	*size = sizeof(TimeData) + 2 * 4 + 2 + stat_db_size + det_db_size;
+	char *data = (char *)malloc(*size);
+	char *p = data;
+	memcpy(data, td, sizeof(TimeData));
+	p += sizeof(TimeData);
+	*((uint32_t *)p) = stat_db->count;
+	p += sizeof(uint32_t);
+	*((uint32_t *)p) = det_db->count;
+	p += sizeof(uint32_t);
+	*(p) = stat_db->size;
+	p += sizeof(uint8_t);
+	*(p) = det_db->size;
+	p += sizeof(uint8_t);
+	// Добавление в дерево, для сжатия статистики
+	if (stat_db->count > 1)
+	{
+		commit_and_reset_statistics();
+		save_kdtree_to_memory(stat_db, stat_tree);
+	}
+	// Запись данных детекторов
+	memcpy(p, stat_db->memory, stat_db_size);	
+	p += stat_db_size;
+	memcpy(p, det_db->memory, det_db_size);	
+	return data;
+}
+
+void unpack_detectors(const char* data, TimeData *stud_time)
+{
+	// Распаковка данных
+	uint32_t stat_count, det_count;
+	uint8_t stat_size, det_size;
+	print_msglog("Load detector");
+	*stud_time = *((TimeData *)data);
+	data += sizeof(TimeData);
+	stat_count = *((uint32_t *)data);
+	data += sizeof(uint32_t);
+	det_count = *((uint32_t *)data);
+	data += sizeof(uint32_t);
+	stat_size = *data;
+	data += sizeof(uint8_t);
+	det_size = *data;
+	data += sizeof(uint8_t);
+	// Вывод информации	
+	print_msglogf("Studying time: %u d. %u h. %u m.\n",
+		stud_time->days, stud_time->hours, stud_time->minutes);
+	print_msglogf("Number of behavior detectors: %u\n", stat_count);
+	print_msglogf("Number of packet content detectors: %u\n", det_count);
+	print_msglogf("Packet content detectors: %u\n", det_size);
+	// Добавление детекторов	
+	reset_memory(stat_db);
+	for (uint32_t i = 0; i < stat_count; i++)
+	{
+		add_to_memory(stat_db, data);
+		data += stat_db->size;
+	}
+	reset_memory(det_db);
+	for (uint32_t i = 0; i < det_count; i++)
+	{
+		add_to_memory(det_db, data);
+		data += det_db->size;
+	}
+}
+
+PackAnomaly *check_package(const char *buf, uint32_t len)
+{
+	PackAnomaly *pa = NULL;
+	if (len > 0)
+	{
+		const char *max_buf = buf + len;
+		while (buf < max_buf && pa == NULL)
+		{
+			if (buf + pat_length > max_buf)
+			{
+				// Выравнивание до длины шаблона
+				char *temp = (char *)malloc(pat_length);
+				uint8_t size = max_buf - buf;
+				memcpy(temp, buf, size);
+				for (uint8_t i = size; i < pat_length; i++)
+					temp[i] = ' ';
+				pa = check_pattern(temp);
+				free(temp);
+			}
+			else
+				pa = check_pattern(buf);
+			buf += pat_shift;
+		}
+	}
+	return pa;
+}
+
+StatAnomaly *check_statistics(const VectorType *vector)
+{
+	StatAnomaly *sa = NULL;
+	// Проверка на вхождение во внешний k-мерный прямоугольник
+	sa = compare_hrect(stat_tree->hrect, vector, stat_tree->k);
+	if (sa == NULL)
+		// Проверка на вхождение в листовую область
+		sa = check_vector(stat_tree->root, vector, stat_tree->k);
+	else
+		// Сохранение значения ближайшей границы
+		sa->hrect = stat_tree->hrect;
+	return sa;
+}
+
 uint32_t xorshift128()
 {
 	// Реализация генерации
@@ -689,77 +848,115 @@ void commit_and_reset_statistics()
 	ZeroMemory(stat_db->memory, stat_db->max_count * sizeof(NBStats));
 }
 
-const char *pack_detectors(TimeData *td, size_t *size)
+PackAnomaly *check_pattern(const char* pat)
 {
-	// Вывод информации
-	print_msglog("Save detector");
-	print_msglogf("Studying time: %u d. %u h. %u m.\n",
-		td->days, td->hours, td->minutes);
-	print_msglogf("Number of behavior detectors: %u\n", stat_db->count);
-	print_msglogf("Number of packet content detectors: %u\n", det_db->count);
-	print_msglogf("Packet content detectors: %u\n", pat_length);
-	// Упаковка данных
-	size_t stat_db_size = stat_db->count * stat_db->size;
-	size_t det_db_size = det_db->count * det_db->size;
-	*size = sizeof(TimeData) + 2 * 4 + 2 + stat_db_size + det_db_size;
-	char *data = (char *)malloc(*size);
-	char *p = data;
-	memcpy(data, td, sizeof(TimeData));
-	p += sizeof(TimeData);
-	*((uint32_t *)p) = stat_db->count;
-	p += sizeof(uint32_t);
-	*((uint32_t *)p) = det_db->count;
-	p += sizeof(uint32_t);
-	*(p) = stat_db->size;
-	p += sizeof(uint8_t);
-	*(p) = det_db->size;
-	p += sizeof(uint8_t);
-	// Добавление в дерево, для сжатия статистики
-	if (stat_db->count > 1)
+	PackAnomaly *pa = NULL;
+	if (pat != NULL)
 	{
-		commit_and_reset_statistics();
-		save_kdtree_to_memory(stat_db, stat_tree);
+		// Проверка, что детекторы не реагируют на данный шаблон
+		char *det = det_db->memory;
+		for (uint32_t j = 0; j < det_db->count; j++)
+			if (hamming_distance(det, pat) < affinity)
+			{
+				// Фиксируем данные
+				pa = (PackAnomaly *)malloc(sizeof(PackAnomaly));
+				pa->pattern = pat;
+				pa->detector = det;
+				pa->len = pat_length;
+				break;
+			}
+			else
+				det += pat_length;
 	}
-	// Запись данных детекторов
-	memcpy(p, stat_db->memory, stat_db_size);	
-	p += stat_db_size;
-	memcpy(p, det_db->memory, det_db_size);	
-	return data;
+	return pa;
 }
 
-void unpack_detectors(const char* data, TimeData *stud_time)
+StatAnomaly *check_vector(KDNode *node, const VectorType *vector, uint8_t k)
 {
-	// Распаковка данных
-	uint32_t stat_count, det_count;
-	uint8_t stat_size, det_size;
-	print_msglog("Load detector");
-	*stud_time = *((TimeData *)data);
-	data += sizeof(TimeData);
-	stat_count = *((uint32_t *)data);
-	data += sizeof(uint32_t);
-	det_count = *((uint32_t *)data);
-	data += sizeof(uint32_t);
-	stat_size = *data;
-	data += sizeof(uint8_t);
-	det_size = *data;
-	data += sizeof(uint8_t);
-	// Вывод информации	
-	print_msglogf("Studying time: %u d. %u h. %u m.\n",
-		stud_time->days, stud_time->hours, stud_time->minutes);
-	print_msglogf("Number of behavior detectors: %u\n", stat_count);
-	print_msglogf("Number of packet content detectors: %u\n", det_count);
-	print_msglogf("Packet content detectors: %u\n", det_size);
-	// Добавление детекторов	
-	reset_memory(stat_db);
-	for (uint32_t i = 0; i < stat_count; i++)
+	StatAnomaly *sa = NULL;
+	// Если попали в пустую область, значит аномалия обнаружена
+	if (node == NULL)
 	{
-		add_to_memory(stat_db, data);
-		data += stat_db->size;
+		// Фиксируем аномалию
+		sa = (StatAnomaly *)malloc(sizeof(StatAnomaly));
+		sa->value = NULL;
+		sa->hrect = NULL;
+		sa->left_range = NULL;
+		sa->right_range = NULL;
+		sa->k = k;
 	}
-	reset_memory(det_db);
-	for (uint32_t i = 0; i < det_count; i++)
+	// Если нашли узел
+	else if (node->is_leaf)
 	{
-		add_to_memory(det_db, data);
-		data += det_db->size;
+		// Смотрим на вхождение в k-мерный прямоугольник листа
+		sa = compare_hrect((VectorType *)node->left, vector, k);
 	}
+	else
+	{
+		// Переходим в глубь дерева
+		if (vector[node->i] > node->mean)
+		{
+			sa = check_vector(node->right, vector, k);
+			// Дополнение левого диапазона
+			if (sa != NULL && sa->left_range == NULL)
+				sa->left_range = find_first_hrect(node->left, FALSE);
+		}
+		else
+		{
+			sa = check_vector(node->left, vector, k);
+			// Дополнение правого диапазона
+			if (sa != NULL && sa->right_range == NULL)
+				sa->right_range = find_first_hrect(node->right, TRUE);
+		}
+		// Если подветвь была пустой
+		if (sa != NULL && sa->value == NULL)
+		{
+			sa->value = vector + node->i;
+			sa->i = node->i;
+		}
+	}
+	return sa;
+}
+
+StatAnomaly *compare_hrect(const VectorType *hrect, const VectorType *vector, uint8_t k)
+{
+	StatAnomaly *sa = NULL;
+	// Проверка на отсутствие в диапазонах
+	for (uint8_t i = 0; i < k; i++)
+		if (vector[i] < hrect[i] || hrect[i + k] < vector[i])
+		{
+			// Фиксируем аномалию
+			sa = (StatAnomaly *)malloc(sizeof(StatAnomaly));
+			sa->value = vector + i;
+			sa->hrect = NULL;
+			sa->left_range = NULL;
+			sa->right_range = NULL;
+			sa->i = i;
+			sa->k = k;
+			break;
+		}
+	return sa;
+}
+
+VectorType *find_first_hrect(KDNode *node, Bool is_left)
+{
+	VectorType *vector = NULL;
+	if (node != NULL)
+	{
+		if (node->is_leaf)
+			vector = (VectorType *)node->left;
+		else if (is_left)
+		{
+			vector = find_first_hrect(node->left, is_left);
+			if (vector == NULL)
+				vector = find_first_hrect(node->right, is_left);
+		}
+		else
+		{
+			vector = find_first_hrect(node->right, is_left);
+			if (vector == NULL)
+				vector = find_first_hrect(node->left, is_left);
+		}		
+	}
+	return vector;
 }

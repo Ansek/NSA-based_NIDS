@@ -160,26 +160,31 @@ void run_analyzer(PList *tcp_ps, PList *udp_ps)
 	}
 
 	// Инициализация параметров алгоритм отрицательного отбора
-	init_algorithm(&stud_time);
+	init_algorithm(&stud_time, work_mode == WMODE_STUD);
 	stats = get_statistics();
 
-	// Создание потока для сохранения детекторов
-	HANDLE hThread = CreateThread(NULL, 0, sd_thread, NULL, 0, NULL);
-	if (hThread == NULL)
+	HANDLE hThread = NULL;
+	
+	if (work_mode == WMODE_STUD)
 	{
-		print_msglog("Thread to save detectors not created!");
-		exit(6);
+		// Создание потока для сохранения детекторов
+		hThread = CreateThread(NULL, 0, sd_thread, NULL, 0, NULL);
+		if (hThread == NULL)
+		{
+			print_msglog("Thread to save detectors not created!");
+			exit(6);
+		}
+		
+		// Создание потока для генерации детекторов
+		hThread = CreateThread(NULL, 0, gd_thread, NULL, 0, NULL);
+		if (hThread == NULL)
+		{
+			print_msglog("Thread to save statistics not created!");
+			exit(7);
+		}	
 	}
 
 	// Создание потока для сохранения статистики
-	hThread = CreateThread(NULL, 0, gd_thread, NULL, 0, NULL);
-	if (hThread == NULL)
-	{
-		print_msglog("Thread to save statistics not created!");
-		exit(7);
-	}
-	
-	// Создание потока для генерации детекторов
 	hThread = CreateThread(NULL, 0, stats_thread, NULL, 0, NULL);
 	if (hThread == NULL)
 	{
@@ -481,7 +486,18 @@ void analyze_data(PackageInfo *info)
 {
 	uint16_t len = info->size - info->shift;
 	if (len > 0)
-		break_into_patterns(info->data, len);
+	{
+		if (work_mode == WMODE_STUD)
+			// Отправка данных на создание шаблонов для обучения
+			break_into_patterns(info->data, len);
+		else
+		{
+			// Проверка пакетов на аномальность
+			PackAnomaly *pa = check_package(info->data, len);
+			if (pa != NULL)
+				report_pa(pa, info);
+		}
+	}
 }
 
 PackageInfo get_ip_info(PackageData *pd)
@@ -600,7 +616,7 @@ DWORD WINAPI an_thread(LPVOID ptr)
 			data->read = TRUE;
 			PackageData *pd = data->r_package;
 			// Определение типа протокола для уточнения анализа
-			if (work_mode == WMODE_STUD)
+			if (work_mode != WMODE_PASS)
 			{
 				if (pd->header.protocol == IPPROTO_TCP)
 					analyze_tcp(pd);
@@ -663,8 +679,17 @@ DWORD WINAPI stats_thread(LPVOID ptr)
 				stats->fin_count, stats->rst_count,
 				stats->al_tcp_port_count, stats->un_tcp_port_count,
 				stats->al_udp_port_count, stats->un_udp_port_count);
-			// Добавление новой статистики, для сохранения предыдущей
-			stats = get_statistics();
+			if (work_mode == WMODE_STUD)
+				// Добавление новой статистики, для сохранения предыдущей
+				stats = get_statistics();
+			else
+			{
+				// Проверка статистики на аномальность
+				StatAnomaly *sa = check_statistics((VectorType *)stats);
+				if (sa != NULL)
+					report_sa(sa);
+				ZeroMemory(stats, sizeof(NBStats));
+			}
 			is_stats_changed = FALSE;
 		}
 	}

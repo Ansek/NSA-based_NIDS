@@ -45,6 +45,36 @@ const char *stats_log_format = "\
 tc=%u;\t\tuc=%u;\t\tic=%u;\t\tipc=%u;\n\
 sc=%u;\t\tac=%u;\t\tfc=%u;\t\trc=%u;\n\
 atc=%u;\t\tutc=%u;\t\tauc=%u;\t\tuuc=%u;\n\n";
+// Шаблон для вывода сообщения об аномальном пакете
+const char *report_pa_format = "\
+\n!!!\n\
+%s\n\
+Anomalous package!\n\
+Source: %s\n\
+Destination: %s\n\
+Pattern:  \"";
+// Шаблон для вывода сообщения об аномальной статистике
+const char *report_sa_format = "\
+\n!!!\n\
+%s\n\
+Anomalous value!\n\
+%s: %u";
+
+const char stats_levels[][43] =
+{
+	"Total number of TCP packets",
+	"Total number of UDP packets",
+	"Total number of ICMP packets",
+	"Total number of packets of other protocols",
+	"Number of half-open TCP connections",
+	"Number of open TCP connections",
+	"Number of closed TCP connections",
+	"Number of dropped TCP connections",
+	"Number of accesses to allowed TCP ports",
+	"Number of accesses to unresolved TCP ports",
+	"Number of accesses to allowed UDP ports",
+	"Number of accesses to unresolved UDP ports"
+};
 
 // Вспомогательные функции
 // Получение файла по идентификатору
@@ -334,4 +364,36 @@ void print_errlogf(const char *text, ...)
 		ReleaseMutex(print_mutex);
 		va_end(ap);
 	}	
+}
+
+void report_pa(const PackAnomaly *pa, const PackageInfo *info)
+{
+	WaitForSingleObject(print_mutex, INFINITE);
+	char time_buff[9];
+	get_localtime(time_buff);
+	printf(report_pa_format, time_buff, info->src_buff, info->dst_buff);
+	fwrite(pa->pattern, pa->len, 1, stdout);
+	printf("\"\nDetector: \"");
+	fwrite(pa->detector, pa->len, 1, stdout);
+	puts("\"\n!!!\n");
+	ReleaseMutex(print_mutex);
+}
+
+void report_sa(const StatAnomaly *sa)
+{
+	WaitForSingleObject(print_mutex, INFINITE);
+	char time_buff[9];
+	get_localtime(time_buff);
+	printf(report_sa_format, time_buff, stats_levels[sa->i], sa->value[0]);
+	if (sa->hrect != NULL)
+		printf("Space valid range: [%u, %u]",
+			sa->hrect[sa->i], sa->hrect[sa->i + sa->k]);
+	if (sa->left_range != NULL)
+		printf("Left valid range: [%u, %u]",
+			sa->left_range[sa->i], sa->left_range[sa->i + sa->k]);
+	if (sa->left_range != NULL)
+		printf("Rigit valid range: [%u, %u]",
+			sa->right_range[sa->i], sa->right_range[sa->i + sa->k]);
+	puts("\n!!!\n");
+	ReleaseMutex(print_mutex);
 }

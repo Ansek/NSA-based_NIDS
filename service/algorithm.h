@@ -11,8 +11,6 @@
 
 #include "filemanager.h"
 
-#define VectorType uint16_t
-
 // Набор переменных для работы с памятью
 typedef struct WorkingMemory
 {
@@ -44,9 +42,9 @@ typedef struct NBStats
 // Узел k-мерного дерева
 typedef struct KDNode
 {
-	VectorType mean;   // Среднее значение i-мерности узла
-	uint8_t i;       // Мерность данного значения
-	Bool is_leaf;    // Флаг, что узел является листом
+	VectorType mean;  // Среднее значение i-мерности узла
+	uint8_t i;        // Мерность данного значения
+	Bool is_leaf;     // Флаг, что узел является листом
 	struct KDNode *left;  // Указатель на левый узел дерева (<= mean)
 	struct KDNode *right; // Указатель на правый узел дерева (> mean)
 } KDNode;
@@ -63,8 +61,9 @@ typedef struct KDTree
 /**
 @brief Инициализирует параметры алгоритма
 @brief stud_time Для записи времени обучения
+@brief is_stud Идет ли сейчас процесс обучения
 */
-void init_algorithm(TimeData *stud_time);
+void init_algorithm(TimeData *stud_time, Bool is_stud);
 
 /**
 @brief Освобождение ресурсов
@@ -111,7 +110,6 @@ Bool write_to_memory(WorkingMemory *wm, char *cursor, const char *data);
 /**
 @brief Разделяет строку на шаблоны нормальной активности
 @param buf Буфер данных для разделения
-@param len Длина строки
 @param len Длина строки
 */
 void break_into_patterns(const char *buf, uint32_t len);
@@ -204,7 +202,7 @@ NBStats *get_statistics();
 @param size Размер сформированных данных
 @return Данные для записи
 */
-const char *pack_detectors(TimeData *td, size_t *size);
+const char *pack_detectors(const TimeData *td, size_t *size);
 
 /**
 @brief Распаковывает данные о детекторах
@@ -212,5 +210,20 @@ const char *pack_detectors(TimeData *td, size_t *size);
 @param data Для получение данных о времени обучения
 */
 void unpack_detectors(const char *data, TimeData *stud_time);
+
+/**
+@brief Проверяет содержимое пакета на аномальность
+@param buf Буфер данных для анализа
+@param len Длина строки
+@return Сведение об аномалии
+*/
+PackAnomaly *check_package(const char *buf, uint32_t len);
+
+/**
+@brief Проверяет текущую статистику на аномальность
+@param vector Проверяемый вектор статистики
+@return Сведение об аномалии
+*/
+StatAnomaly *check_statistics(const VectorType *vector);
 
 #endif

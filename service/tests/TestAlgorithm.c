@@ -14,6 +14,7 @@ extern uint8_t pat_length, pat_shift, affinity;
 extern WorkingMemory *pat_db;
 extern WorkingMemory *det_db;
 extern WorkingMemory *stat_db;
+extern KDTree *stat_tree;
 extern Bool msg_log_enabled;
 
 // Проверка на добавление шаблона в базу
@@ -71,7 +72,7 @@ void test_BreakIntoPatterns_should_Replace()
 }
 
 // Проверка на корректность расчёта расстояния Хэмминга
-void test_HammingDistance_should_Correctmean()
+void test_HammingDistance_should_CorrectValue()
 {
 	TEST_ASSERT_EQUAL_UINT8(0, hamming_distance("12345", "12345"));
 	TEST_ASSERT_EQUAL_UINT8(1, hamming_distance("62345", "12345"));
@@ -87,7 +88,7 @@ typedef struct MiniStats
 } MiniStats;
 
 // Проверка вычислений границ 
-void test_GetHRect_should_Correctmeans()
+void test_GetHRect_should_CorrectValues()
 {
 	MiniStats stats[5] = 
 	{
@@ -171,8 +172,8 @@ void test_CreateKDTree_CorrectValue()
 	free_memory(wm);
 }
 
-// Проверка корректности структуры после сжатия
-void test_CompressKDTree_CorrectStructure()
+// Для нескольких тестов со сжатым деревом
+KDTree *get_compress_kdtree(WorkingMemory *wm)
 {
 	MiniStats stats[6] = 
 	{
@@ -183,14 +184,21 @@ void test_CompressKDTree_CorrectStructure()
 		 5,  5,  5,
 		24,  6, 19
 	};
-	// Размещение в памяти
-	WorkingMemory *wm = create_memory(6, sizeof(MiniStats));
+	// Размещение в памяти	
 	for (int i = 0; i < 6; i++)
 		add_to_memory(wm, (char *)&(stats[i]));
 	// Создание дерева
 	KDTree *tree = create_kdtree(wm, 5);
 	// Сжатие дерева
 	compress_kdtree(tree);
+	return tree;
+}
+
+// Проверка корректности структуры после сжатия
+void test_CompressKDTree_CorrectStructure()
+{
+	WorkingMemory *wm = create_memory(6, sizeof(MiniStats));
+	KDTree *tree = get_compress_kdtree(wm);
 	// Запись данных листов в память
 	save_kdtree_to_memory(wm, tree);
 	// Проверка размера
@@ -260,6 +268,115 @@ void test_PackAndUnpackDetectors_DataIntegrity()
 	}
 }
 
+// Проверка поиска аномалии в данных пакета
+void test_CheckPackage_AnomalyDetection()
+{
+	reset_memory(det_db);
+	add_to_memory(det_db, "abcde");
+	add_to_memory(det_db, "01234");
+	add_to_memory(det_db, "56789");
+	PackAnomaly *pa = NULL;
+	pa = check_package("06780", 5);
+	TEST_ASSERT_NOT_NULL(pa);
+	TEST_ASSERT_EQUAL_STRING_LEN("56789", pa->detector, det_db->size);
+	pa = check_package("a0c0e", 5);
+	TEST_ASSERT_NOT_NULL(pa);
+	TEST_ASSERT_EQUAL_STRING_LEN("abcde", pa->detector, det_db->size);
+	pa = check_package("01234", 5);
+	TEST_ASSERT_NOT_NULL(pa);
+	TEST_ASSERT_EQUAL_STRING_LEN("01234", pa->detector, det_db->size);
+}
+
+// Проверка поиска аномалии статистики вне пространства дерева
+void test_CheckStatistics_AnomalyDetectionOutSpace()
+{
+	WorkingMemory *wm = create_memory(6, sizeof(MiniStats));
+	stat_tree = get_compress_kdtree(wm);
+	// Добавляемы данные
+	MiniStats stats[8] = 
+	{
+		 1,  1,   1,
+		 1,  15, 15,
+		15,   1, 15,
+		15,  15,  1,
+		15,  15, 30,
+		15,  30, 15,
+		30,  15, 15,
+		30,  30, 30
+	};
+	// Сравнение данных
+	MiniStats expected[2] = {
+		 5,  5,  5,
+		25, 25, 25
+	};
+	for (int i = 0; i < 8; i++)
+	{
+		StatAnomaly *sa = check_statistics((VectorType *)(stats + i));
+		TEST_ASSERT_NOT_NULL(sa);
+		TEST_ASSERT_EQUAL_UINT16_ARRAY(&expected, sa->hrect, 6);
+		if (i < 4)
+			TEST_ASSERT_EQUAL_UINT16(1, *sa->value);
+		else
+			TEST_ASSERT_EQUAL_UINT16(30, *sa->value);
+		if (i < 2 || 5 < i)
+			TEST_ASSERT_EQUAL_UINT8(0, sa->i);
+		else if (i == 2 || 5 == i)
+			TEST_ASSERT_EQUAL_UINT8(1, sa->i);
+		else
+			TEST_ASSERT_EQUAL_UINT8(2, sa->i);		
+	}
+	free_kdnode(stat_tree->root);
+	free(stat_tree);
+}
+
+// Проверка поиска аномалии статистики в пространстве дерева
+void test_CheckStatistics_AnomalyDetectionInSpace()
+{
+	WorkingMemory *wm = create_memory(6, sizeof(MiniStats));
+	stat_tree = get_compress_kdtree(wm);
+	// Добавляемы данные
+	MiniStats stats[3] = 
+	{
+		15,  5, 15,
+		22, 17, 17,
+		22,  5, 10
+	};
+	// Сравнение данных
+	MiniStats expected_1[2] = {
+		 5,  5,  5,
+		 5,  5,  5
+	};
+	MiniStats expected_2[2] = {
+		21,  6,  16,
+		24,  11, 19
+	};
+	MiniStats expected_3[2] = {
+		25, 25, 25,
+		25, 25, 25
+	};
+	StatAnomaly *sa = check_statistics((VectorType *)(stats));
+	TEST_ASSERT_NOT_NULL(sa);
+	TEST_ASSERT_NULL(sa->hrect);
+	TEST_ASSERT_EQUAL_UINT16_ARRAY(&expected_1, sa->left_range, 6);
+	TEST_ASSERT_EQUAL_UINT16_ARRAY(&expected_2, sa->right_range, 6);
+	TEST_ASSERT_EQUAL_UINT16(15, *sa->value);
+	TEST_ASSERT_EQUAL_UINT8(0, sa->i);
+	sa = check_statistics((VectorType *)(stats + 1));
+	TEST_ASSERT_NOT_NULL(sa);
+	TEST_ASSERT_NULL(sa->hrect);
+	TEST_ASSERT_EQUAL_UINT16_ARRAY(&expected_2, sa->left_range, 6);
+	TEST_ASSERT_EQUAL_UINT16_ARRAY(&expected_3, sa->right_range, 6);
+	TEST_ASSERT_EQUAL_UINT16(17, *sa->value);
+	TEST_ASSERT_EQUAL_UINT8(1, sa->i);
+	sa = check_statistics((VectorType *)(stats + 2));
+	TEST_ASSERT_NOT_NULL(sa);
+	TEST_ASSERT_NULL(sa->hrect);
+	TEST_ASSERT_EQUAL_UINT16_ARRAY(&expected_1, sa->left_range, 6);
+	TEST_ASSERT_EQUAL_UINT16_ARRAY(&expected_2, sa->right_range, 6);
+	TEST_ASSERT_EQUAL_UINT16(10, *sa->value);
+	TEST_ASSERT_EQUAL_UINT8(2, sa->i);
+}
+
 void setUp()
 {
 	pat_length = 5;
@@ -284,11 +401,14 @@ int main()
 	RUN_TEST(test_BreakIntoPatterns_should_Add);
 	RUN_TEST(test_BreakIntoPatterns_should_NoRepeat);
 	RUN_TEST(test_BreakIntoPatterns_should_Replace);
-	RUN_TEST(test_HammingDistance_should_Correctmean);
-	RUN_TEST(test_GetHRect_should_Correctmeans);
+	RUN_TEST(test_HammingDistance_should_CorrectValue);
+	RUN_TEST(test_GetHRect_should_CorrectValues);
 	RUN_TEST(test_CreateKDNode_CorrectStructure);
 	RUN_TEST(test_CreateKDTree_CorrectValue);
 	RUN_TEST(test_CompressKDTree_CorrectStructure);
 	RUN_TEST(test_PackAndUnpackDetectors_DataIntegrity);
+	RUN_TEST(test_CheckPackage_AnomalyDetection);
+	RUN_TEST(test_CheckStatistics_AnomalyDetectionOutSpace);
+	RUN_TEST(test_CheckStatistics_AnomalyDetectionInSpace);
 	return UNITY_END();
 }
